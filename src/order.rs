@@ -1,10 +1,40 @@
 use std::cmp::{min, Ordering};
+use std::collections::BinaryHeap;
 use std::ops::Neg;
 
 use ordered_float::NotNan;
 use uuid::Uuid;
 
 use crate::account::AccountId;
+
+// consider pub (super)
+
+#[derive(Debug, Default)]
+pub struct OrderBook {
+    bids: BinaryHeap<BidOrder>,
+    asks: BinaryHeap<AskOrder>,
+}
+
+impl OrderBook {
+    pub fn get_best_counter(&self, side: Side) -> Option<&OrderBase> {
+        match side {
+            Side::Ask => Some(&self.bids.peek()?.order),
+            Side::Bid => Some(&self.asks.peek()?.order),
+        }
+    }
+    pub fn pop_best_counter(&mut self, side: Side) -> Option<OrderBase> {
+        match side {
+            Side::Ask => Some(self.bids.pop()?.order),
+            Side::Bid => Some(self.asks.pop()?.order),
+        }
+    }
+    pub fn insert_order(&mut self, order: OrderBase) {
+        match order.side {
+            Side::Ask => self.asks.push(AskOrder { order }),
+            Side::Bid => self.bids.push(BidOrder { order }),
+        }
+    }
+}
 
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
 pub enum Side {
@@ -25,11 +55,11 @@ impl Neg for Side {
 
 #[derive(Debug)]
 pub struct OrderBase {
-    limit: NotNan<f64>,
+    pub limit: NotNan<f64>,
     timestamp: NotNan<f64>,
     pub quantity: usize,
     pub side: Side,
-    account_id: AccountId,
+    pub account_id: AccountId,
     id: Uuid,
 }
 
@@ -41,7 +71,7 @@ impl PartialEq for OrderBase {
 impl Eq for OrderBase {}
 
 #[derive(Debug)]
-pub struct AskOrder {
+struct AskOrder {
     order: OrderBase,
 }
 
@@ -69,7 +99,7 @@ impl PartialEq for AskOrder {
 impl Eq for AskOrder {}
 
 #[derive(Debug)]
-pub struct BidOrder {
+struct BidOrder {
     order: OrderBase,
 }
 
@@ -97,7 +127,7 @@ impl PartialEq for BidOrder {
 impl Eq for BidOrder {}
 
 pub trait IntoOrderBase {
-    fn into_order_base(self) -> OrderBase; 
+    fn into_order_base(self) -> OrderBase;
 }
 
 impl IntoOrderBase for BidOrder {
@@ -196,6 +226,60 @@ mod tests {
         assert!(bid2 == bid4);
         // bid3 offers a higher price than bid4
         assert!(bid3 > bid4);
+    }
+    #[test]
+    fn OrderBookPriority() {
+        let account = account::Account::new(1e5, 0);
+        let mut order_book = OrderBook {
+            bids: BinaryHeap::new(),
+            asks: BinaryHeap::new(),
+        };
 
+        let ask1 = OrderBase {
+            limit: NotNan::new(20.).unwrap(),
+            timestamp: NotNan::new(1703713624.0).unwrap(),
+            quantity: 10,
+            side: Side::Ask,
+            account_id: AccountId::new(&account),
+            id: Uuid::new_v4(),
+        };
+        let ask2 = OrderBase {
+            limit: NotNan::new(30.).unwrap(),
+            timestamp: NotNan::new(1703713626.0).unwrap(),
+            quantity: 20,
+            side: Side::Ask,
+            account_id: AccountId::new(&account),
+            id: Uuid::new_v4(),
+        };
+        let ask3 = OrderBase {
+            limit: NotNan::new(15.).unwrap(),
+            timestamp: NotNan::new(1703713628.0).unwrap(),
+            quantity: 1,
+            side: Side::Ask,
+            account_id: AccountId::new(&account),
+            id: Uuid::new_v4(),
+        };
+        let ask4 = OrderBase {
+            limit: NotNan::new(20.).unwrap(),
+            timestamp: NotNan::new(1703713629.0).unwrap(),
+            quantity: 30,
+            side: Side::Ask,
+            account_id: AccountId::new(&account),
+            id: Uuid::new_v4(),
+        };
+
+        let (ask1_id, ask2_id, ask3_id, ask4_id) = (ask1.id, ask2.id, ask3.id, ask4.id);
+    
+        order_book.insert_order(ask1);
+        order_book.insert_order(ask2);
+        order_book.insert_order(ask3);
+        order_book.insert_order(ask4);
+
+        assert_eq!(order_book.get_best_counter(Side::Bid).unwrap().id, ask3_id); 
+
+        assert_eq!(order_book.pop_best_counter(Side::Bid).unwrap().id, ask3_id);
+        assert_eq!(order_book.pop_best_counter(Side::Bid).unwrap().id, ask1_id);
+        assert_eq!(order_book.pop_best_counter(Side::Bid).unwrap().id, ask4_id);
+        assert_eq!(order_book.pop_best_counter(Side::Bid).unwrap().id, ask2_id);
     }
 }

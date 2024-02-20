@@ -1,7 +1,7 @@
 use ordered_float::NotNan;
 use uuid::Uuid;
 
-#[derive(Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq, Copy, Clone)]
 pub struct AccountId {
     account_id: Uuid,
 }
@@ -12,13 +12,16 @@ impl AccountId {
             account_id: account.id,
         }
     }
+    pub fn as_uuid(self) -> Uuid {
+        self.account_id
+    }
 }
 
 #[derive(Debug)]
 pub struct Account {
     id: Uuid,
-    account_balance: NotNan<f64>,
-    position: i32,
+    pub account_balance: NotNan<f64>,
+    pub position: i32,
 }
 
 impl Account {
@@ -29,7 +32,7 @@ impl Account {
             position,
         }
     }
-    pub fn get_id(&self) -> Uuid{
+    pub fn get_id(&self) -> Uuid {
         self.id
     }
 }

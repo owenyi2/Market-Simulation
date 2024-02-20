@@ -4,8 +4,8 @@ use std::collections::{BinaryHeap, HashMap};
 use uuid::Uuid;
 
 pub mod account;
-pub mod order;
 pub mod market;
+pub mod order;
 
 // #[derive(debug)]
 // struct Market {
