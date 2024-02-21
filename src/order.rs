@@ -1,11 +1,13 @@
 use std::cmp::{min, Ordering};
 use std::collections::BinaryHeap;
+use std::error::Error;
 use std::ops::Neg;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ordered_float::NotNan;
 use uuid::Uuid;
 
-use crate::account::AccountId;
+use crate::account::{self, Account, AccountId};
 
 // consider pub (super)
 
@@ -22,6 +24,8 @@ impl OrderBook {
             Side::Bid => Some(&self.asks.peek()?.order),
         }
     }
+    // this is a bit counterintuitive of an API, we should do pop_best and get_best with side
+    // if the called wants the opposite they should use -side because we impl Neg already
     pub fn pop_best_counter(&mut self, side: Side) -> Option<OrderBase> {
         match side {
             Side::Ask => Some(self.bids.pop()?.order),
@@ -32,6 +36,12 @@ impl OrderBook {
         match order.side {
             Side::Ask => self.asks.push(AskOrder { order }),
             Side::Bid => self.bids.push(BidOrder { order }),
+        }
+    }
+    pub fn is_empty(&self, side: Side) -> bool {
+        match side {
+            Side::Ask => self.asks.is_empty(),
+            Side::Bid => self.bids.is_empty(),
         }
     }
 }
@@ -61,6 +71,29 @@ pub struct OrderBase {
     pub side: Side,
     pub account_id: AccountId,
     id: Uuid,
+}
+
+// Make this a builder instead of a new
+impl OrderBase {
+    pub fn build(
+        limit: f64,
+        quantity: usize,
+        side: Side,
+        account: &Account,
+    ) -> Result<OrderBase, Box<dyn Error>> {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
+        Ok(OrderBase {
+            limit: NotNan::new(limit)?,
+            timestamp: NotNan::new(timestamp)?,
+            quantity,
+            side,
+            account_id: AccountId::new(account),
+            id: Uuid::new_v4(),
+        })
+    }
+    pub fn get_id(&self) -> Uuid {
+        self.id
+    }
 }
 
 impl PartialEq for OrderBase {
@@ -228,6 +261,34 @@ mod tests {
         assert!(bid3 > bid4);
     }
     #[test]
+    fn OrderBaseBuilder() {
+        let alice = Account::new(1e5, 0);
+        let bob = Account::new(1e5, 0);
+
+        let ask1 = OrderBase::build(20., 10, Side::Ask, &alice).unwrap();
+        let ask2 = OrderBase::build(30., 20, Side::Ask, &alice).unwrap();
+        let ask3 = OrderBase::build(15., 1, Side::Ask, &alice).unwrap();
+        let ask4 = OrderBase::build(20., 30, Side::Ask, &alice).unwrap();
+
+        println!("Ask_1: {:?}", ask1);
+        println!("Ask_2: {:?}", ask2);
+        println!("Ask_3: {:?}", ask3);
+        println!("Ask_4: {:?}", ask4);
+
+        assert!(ask1.timestamp <= ask2.timestamp);
+        assert!(ask2.timestamp <= ask3.timestamp);
+        assert!(ask3.timestamp <= ask4.timestamp);
+    }
+    #[test]
+    fn is_empty() {
+        let mut order_book = OrderBook {
+            bids: BinaryHeap::new(),
+            asks: BinaryHeap::new(),
+        };
+        assert!(order_book.is_empty(Side::Ask));
+        assert!(order_book.is_empty(Side::Bid));
+    }
+    #[test]
     fn OrderBookPriority() {
         let account = account::Account::new(1e5, 0);
         let mut order_book = OrderBook {
@@ -269,13 +330,13 @@ mod tests {
         };
 
         let (ask1_id, ask2_id, ask3_id, ask4_id) = (ask1.id, ask2.id, ask3.id, ask4.id);
-    
+
         order_book.insert_order(ask1);
         order_book.insert_order(ask2);
         order_book.insert_order(ask3);
         order_book.insert_order(ask4);
 
-        assert_eq!(order_book.get_best_counter(Side::Bid).unwrap().id, ask3_id); 
+        assert_eq!(order_book.get_best_counter(Side::Bid).unwrap().id, ask3_id);
 
         assert_eq!(order_book.pop_best_counter(Side::Bid).unwrap().id, ask3_id);
         assert_eq!(order_book.pop_best_counter(Side::Bid).unwrap().id, ask1_id);

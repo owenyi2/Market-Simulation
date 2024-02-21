@@ -12,6 +12,8 @@ impl AccountId {
             account_id: account.id,
         }
     }
+    // It makes more sense to only create an AccountId if the account has been stored in a market. So the constructor should take a uuid, validate if the uuid is in the market.accounts HashMap then return a Result rather than an AccountId
+    // TODO: Refactor as per above. Jokes, our unit tests are not really unit tests e.g. unit tests for Order need an account instance to create an Order. To solve this we could make orderbase an actual order base, then derive other stuff on top but that's fucked + a lot of code edits are propagated from that. ok this refactor if done, will require a market instance in the order unit test. Oh well.
     pub fn as_uuid(self) -> Uuid {
         self.account_id
     }
