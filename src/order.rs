@@ -170,7 +170,7 @@ mod tests {
     fn ask_ordering() {
         let mut market = Market::default();
 
-        let account_id = market.accounts.create_new_account(1e5.into(), 0);
+        let account_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
 
         let ask1 = AskOrder {
             order: OrderBase {
@@ -199,7 +199,7 @@ mod tests {
     fn bid_ordering() { 
         let mut market = Market::default();
 
-        let account_id = market.accounts.create_new_account(1e5.into(), 0);
+        let account_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
 
         let bid1 = BidOrder {
             order: OrderBase {
@@ -252,7 +252,7 @@ mod tests {
     fn order_base_builder() { 
         let mut market = Market::default();
 
-        let account_id = market.accounts.create_new_account(1e5.into(), 0);
+        let account_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
 
         let ask1 = OrderBase::build(20., 10, Side::Ask, account_id).unwrap();
         let ask2 = OrderBase::build(30., 20, Side::Ask, account_id).unwrap();
@@ -281,7 +281,7 @@ mod tests {
     fn order_book_priority() {
         let mut market = Market::default();
 
-        let account_id = market.accounts.create_new_account(1e5.into(), 0);
+        let account_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
 
         let mut order_book = OrderBook {
             bids: BinaryHeap::new(),

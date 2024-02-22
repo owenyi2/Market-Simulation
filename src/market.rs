@@ -69,12 +69,13 @@ mod tests {
     use super::*;
     use crate::order::Side;
 
+    use ordered_float::NotNan;
     #[test]
     fn process_orders_1() {
         let mut market = Market::default();
 
-        let alice_id = market.accounts.create_new_account(1e5.into(), 0);
-        let bob_id = market.accounts.create_new_account(1e5.into(), 0);
+        let alice_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
+        let bob_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
 
         let ask1 = OrderBase::build(
             20.,
@@ -121,13 +122,13 @@ mod tests {
         println!("{:#?}", market.order_book);
         let best_ask = market.order_book.pop_best_counter(Side::Bid).unwrap();
 
-        assert_eq!(best_ask.limit, 20.0.into());
+        assert_eq!(best_ask.limit.into_inner(), 20.0);
         assert_eq!(best_ask.quantity, 18);
         assert_eq!(best_ask.get_id(), ask4_id);
 
         let best_ask = market.order_book.pop_best_counter(Side::Bid).unwrap();
 
-        assert_eq!(best_ask.limit, 30.0.into());
+        assert_eq!(best_ask.limit.into_inner(), 30.0);
         assert_eq!(best_ask.quantity, 20);
         assert_eq!(best_ask.get_id(), ask2_id);
 
@@ -138,9 +139,9 @@ mod tests {
     fn process_orders_2() {
         let mut market = Market::default();
 
-        let alice_id = market.accounts.create_new_account(1e5.into(), 0);
-        let bob_id = market.accounts.create_new_account(1e5.into(), 0);
-        let charlie_id = market.accounts.create_new_account(1e5.into(), 0);
+        let alice_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
+        let bob_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
+        let charlie_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
 
         let bid1 = OrderBase::build(
             121.5,
@@ -199,7 +200,7 @@ mod tests {
         let best_bid = market.order_book.pop_best_counter(Side::Ask).unwrap();
 
         assert_eq!(best_bid.get_id(), bid2_id);
-        assert_eq!(best_bid.limit, 121.5.into());
+        assert_eq!(best_bid.limit.into_inner(), 121.5);
         assert_eq!(best_bid.quantity, 1);
 
         assert!(market.order_book.is_empty(Side::Ask));
@@ -209,10 +210,10 @@ mod tests {
     fn process_orders_3() {
         let mut market = Market::default();
 
-        let alice_id = market.accounts.create_new_account(1e5.into(), 0);
-        let bob_id = market.accounts.create_new_account(1e5.into(), 0);
-        let charlie_id = market.accounts.create_new_account(1e5.into(), 1000);
-        let dan_id = market.accounts.create_new_account(1e5.into(), 1000);
+        let alice_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
+        let bob_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
+        let charlie_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 1000);
+        let dan_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 1000);
 
         // Alice sets up the following:
         // - 30 @ 60.01 bid / 12 @ 60.11 ask
@@ -316,34 +317,34 @@ mod tests {
 
         let best_ask = market.order_book.pop_best_counter(Side::Bid).unwrap();
 
-        assert_eq!(best_ask.limit, 60.2.into());
+        assert_eq!(best_ask.limit.into_inner(), 60.2);
         assert_eq!(best_ask.quantity, 10);
 
         let best_ask = market.order_book.pop_best_counter(Side::Bid).unwrap();
 
-        assert_eq!(best_ask.limit, 60.3.into());
+        assert_eq!(best_ask.limit.into_inner(), 60.3);
         assert_eq!(best_ask.quantity, 10);
 
         let best_bid = market.order_book.pop_best_counter(Side::Ask).unwrap();
 
-        assert_eq!(best_bid.limit, 60.11.into());
+        assert_eq!(best_bid.limit.into_inner(), 60.11);
         assert_eq!(best_bid.quantity, 8);
 
         let best_bid = market.order_book.pop_best_counter(Side::Ask).unwrap();
 
-        assert_eq!(best_bid.limit, 60.01.into());
+        assert_eq!(best_bid.limit.into_inner(), 60.01);
         assert_eq!(best_bid.quantity, 11);
 
         assert!(market.order_book.is_empty(Side::Ask));
         assert!(market.order_book.is_empty(Side::Bid));
 
-        assert_eq!(alice_account.account_balance, 99522.1.into());
+        assert_eq!(alice_account.account_balance.into_inner(), 99522.1);
         assert_eq!(alice_account.position, 8);
-        assert_eq!(bob_account.account_balance, 93998.02.into());
+        assert_eq!(bob_account.account_balance.into_inner(), 93998.02);
         assert_eq!(bob_account.position, 100);
-        assert_eq!(charlie_account.account_balance, 107201.2.into());
+        assert_eq!(charlie_account.account_balance.into_inner(), 107201.2);
         assert_eq!(charlie_account.position, 880);
-        assert_eq!(dan_account.account_balance, 99278.68.into());
+        assert_eq!(dan_account.account_balance.into_inner(), 99278.68);
         assert_eq!(dan_account.position, 1012);
 
     }

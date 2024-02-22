@@ -84,14 +84,14 @@ impl Accounts {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use ordered_float::NotNan;
 
     #[test]
     fn accounts_create_new_account() {
         let mut accounts = Accounts::default();
 
-        let account1_id = accounts.create_new_account(1e5.into(), 10);
-        let account2_id = accounts.create_new_account(1e5.into(), 0);
+        let account1_id = accounts.create_new_account(NotNan::new(1e5).unwrap(), 10);
+        let account2_id = accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
 
         assert_eq!(account1_id.as_uuid(), accounts.get(&account1_id).id);
         assert_eq!(account2_id.as_uuid(), accounts.get(&account2_id).id);
