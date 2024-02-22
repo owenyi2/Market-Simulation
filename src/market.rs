@@ -16,7 +16,7 @@ impl Market {
     fn handle_incoming_order(&mut self, mut order: OrderBase) {
         let side = order.side;
         let order = loop {
-            let best_counter = self.order_book.get_best_counter(side);
+            let best_counter = self.order_book.peek(-side);
             match best_counter {
                 Some(counter) => {
                     if counter.limit * f64::from(side as i32) > order.limit * f64::from(side as i32)
@@ -27,7 +27,7 @@ impl Market {
                 None => break Some(order),
             }
 
-            let mut matched = self.order_book.pop_best_counter(side).unwrap();
+            let mut matched = self.order_book.pop(-side).unwrap();
             let aggressor_id = order.account_id;
             let counterparty_id = matched.account_id;
             let transaction_quantity = min(order.quantity, matched.quantity);
@@ -120,13 +120,13 @@ mod tests {
         market.handle_incoming_order(bid1);
 
         println!("{:#?}", market.order_book);
-        let best_ask = market.order_book.pop_best_counter(Side::Bid).unwrap();
+        let best_ask = market.order_book.pop(Side::Ask).unwrap();
 
         assert_eq!(best_ask.limit.into_inner(), 20.0);
         assert_eq!(best_ask.quantity, 18);
         assert_eq!(best_ask.get_id(), ask4_id);
 
-        let best_ask = market.order_book.pop_best_counter(Side::Bid).unwrap();
+        let best_ask = market.order_book.pop(Side::Ask).unwrap();
 
         assert_eq!(best_ask.limit.into_inner(), 30.0);
         assert_eq!(best_ask.quantity, 20);
@@ -197,7 +197,7 @@ mod tests {
         market.handle_incoming_order(bid3);
         market.handle_incoming_order(ask3);
 
-        let best_bid = market.order_book.pop_best_counter(Side::Ask).unwrap();
+        let best_bid = market.order_book.pop(Side::Bid).unwrap();
 
         assert_eq!(best_bid.get_id(), bid2_id);
         assert_eq!(best_bid.limit.into_inner(), 121.5);
@@ -315,22 +315,22 @@ mod tests {
         println!("{:#?}", &dan_account);
         println!("{:#?}", market.order_book);
 
-        let best_ask = market.order_book.pop_best_counter(Side::Bid).unwrap();
+        let best_ask = market.order_book.pop(Side::Ask).unwrap();
 
         assert_eq!(best_ask.limit.into_inner(), 60.2);
         assert_eq!(best_ask.quantity, 10);
 
-        let best_ask = market.order_book.pop_best_counter(Side::Bid).unwrap();
+        let best_ask = market.order_book.pop(Side::Ask).unwrap();
 
         assert_eq!(best_ask.limit.into_inner(), 60.3);
         assert_eq!(best_ask.quantity, 10);
 
-        let best_bid = market.order_book.pop_best_counter(Side::Ask).unwrap();
+        let best_bid = market.order_book.pop(Side::Bid).unwrap();
 
         assert_eq!(best_bid.limit.into_inner(), 60.11);
         assert_eq!(best_bid.quantity, 8);
 
-        let best_bid = market.order_book.pop_best_counter(Side::Ask).unwrap();
+        let best_bid = market.order_book.pop(Side::Bid).unwrap();
 
         assert_eq!(best_bid.limit.into_inner(), 60.01);
         assert_eq!(best_bid.quantity, 11);

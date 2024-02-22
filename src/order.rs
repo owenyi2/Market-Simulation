@@ -18,18 +18,18 @@ pub struct OrderBook {
 }
 
 impl OrderBook {
-    pub fn get_best_counter(&self, side: Side) -> Option<&OrderBase> {
+    pub fn peek(&self, side: Side) -> Option<&OrderBase> {
         match side {
-            Side::Ask => Some(&self.bids.peek()?.1.order),
-            Side::Bid => Some(&self.asks.peek()?.1.order),
+            Side::Ask => Some(&self.asks.peek()?.1.order),
+            Side::Bid => Some(&self.bids.peek()?.1.order),
         }
     }
     // this is a bit counterintuitive of an API, we should do pop_best and get_best with side
     // if the called wants the opposite they should use -side because we impl Neg already
-    pub fn pop_best_counter(&mut self, side: Side) -> Option<OrderBase> {
+    pub fn pop(&mut self, side: Side) -> Option<OrderBase> {
         match side {
-            Side::Ask => Some(self.bids.pop()?.1.order),
-            Side::Bid => Some(self.asks.pop()?.1.order),
+            Side::Ask => Some(self.asks.pop()?.1.order),
+            Side::Bid => Some(self.bids.pop()?.1.order),
         }
     }
     pub fn insert_order(&mut self, order: OrderBase) {
@@ -332,11 +332,11 @@ mod tests {
         order_book.insert_order(ask3);
         order_book.insert_order(ask4);
 
-        assert_eq!(order_book.get_best_counter(Side::Bid).unwrap().id, ask3_id);
+        assert_eq!(order_book.peek(Side::Ask).unwrap().id, ask3_id);
 
-        assert_eq!(order_book.pop_best_counter(Side::Bid).unwrap().id, ask3_id);
-        assert_eq!(order_book.pop_best_counter(Side::Bid).unwrap().id, ask1_id);
-        assert_eq!(order_book.pop_best_counter(Side::Bid).unwrap().id, ask4_id);
-        assert_eq!(order_book.pop_best_counter(Side::Bid).unwrap().id, ask2_id);
+        assert_eq!(order_book.pop(Side::Ask).unwrap().id, ask3_id);
+        assert_eq!(order_book.pop(Side::Ask).unwrap().id, ask1_id);
+        assert_eq!(order_book.pop(Side::Ask).unwrap().id, ask4_id);
+        assert_eq!(order_book.pop(Side::Ask).unwrap().id, ask2_id);
     }
 }
