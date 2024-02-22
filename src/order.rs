@@ -79,7 +79,7 @@ impl OrderBase {
         limit: f64,
         quantity: usize,
         side: Side,
-        account: &Account,
+        account_id: AccountId,
     ) -> Result<OrderBase, Box<dyn Error>> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
         Ok(OrderBase {
@@ -87,7 +87,7 @@ impl OrderBase {
             timestamp: NotNan::new(timestamp)?,
             quantity,
             side,
-            account_id: AccountId::new(account),
+            account_id,
             id: Uuid::new_v4(),
         })
     }
@@ -164,10 +164,13 @@ mod tests {
     use super::*;
     use crate::account;
     use uuid::Uuid;
+    use crate::market::Market;
 
     #[test]
     fn ask_ordering() {
-        let account = account::Account::new(1e5, 0);
+        let mut market = Market::default();
+
+        let account_id = market.accounts.create_new_account(1e5.into(), 0);
 
         let ask1 = AskOrder {
             order: OrderBase {
@@ -175,7 +178,7 @@ mod tests {
                 timestamp: NotNan::new(3.).unwrap(),
                 quantity: 12,
                 side: Side::Ask,
-                account_id: AccountId::new(&account),
+                account_id: account_id,
                 id: Uuid::new_v4(),
             },
         };
@@ -185,7 +188,7 @@ mod tests {
                 timestamp: NotNan::new(3.).unwrap(),
                 quantity: 10,
                 side: Side::Ask,
-                account_id: AccountId::new(&account),
+                account_id: account_id,
                 id: Uuid::new_v4(),
             },
         };
@@ -193,8 +196,10 @@ mod tests {
         assert!(ask2 > ask1);
     }
     #[test]
-    fn bid_ordering() {
-        let account = account::Account::new(1e5, 0);
+    fn bid_ordering() { 
+        let mut market = Market::default();
+
+        let account_id = market.accounts.create_new_account(1e5.into(), 0);
 
         let bid1 = BidOrder {
             order: OrderBase {
@@ -202,7 +207,7 @@ mod tests {
                 timestamp: NotNan::new(3.).unwrap(),
                 quantity: 2,
                 side: Side::Bid,
-                account_id: AccountId::new(&account),
+                account_id: account_id,
                 id: Uuid::new_v4(),
             },
         };
@@ -212,7 +217,7 @@ mod tests {
                 timestamp: NotNan::new(4.).unwrap(),
                 quantity: 3,
                 side: Side::Bid,
-                account_id: AccountId::new(&account),
+                account_id: account_id,
                 id: Uuid::new_v4(),
             },
         };
@@ -222,7 +227,7 @@ mod tests {
                 timestamp: NotNan::new(3.).unwrap(),
                 quantity: 2,
                 side: Side::Bid,
-                account_id: AccountId::new(&account),
+                account_id: account_id,
                 id: Uuid::new_v4(),
             },
         };
@@ -232,7 +237,7 @@ mod tests {
                 timestamp: NotNan::new(4.).unwrap(),
                 quantity: 3,
                 side: Side::Bid,
-                account_id: AccountId::new(&account),
+                account_id: account_id,
                 id: Uuid::new_v4(),
             },
         };
@@ -244,13 +249,15 @@ mod tests {
         assert!(bid3 > bid4);
     }
     #[test]
-    fn order_base_builder() {
-        let alice = Account::new(1e5, 0);
+    fn order_base_builder() { 
+        let mut market = Market::default();
 
-        let ask1 = OrderBase::build(20., 10, Side::Ask, &alice).unwrap();
-        let ask2 = OrderBase::build(30., 20, Side::Ask, &alice).unwrap();
-        let ask3 = OrderBase::build(15., 1, Side::Ask, &alice).unwrap();
-        let ask4 = OrderBase::build(20., 30, Side::Ask, &alice).unwrap();
+        let account_id = market.accounts.create_new_account(1e5.into(), 0);
+
+        let ask1 = OrderBase::build(20., 10, Side::Ask, account_id).unwrap();
+        let ask2 = OrderBase::build(30., 20, Side::Ask, account_id).unwrap();
+        let ask3 = OrderBase::build(15., 1, Side::Ask, account_id).unwrap();
+        let ask4 = OrderBase::build(20., 30, Side::Ask, account_id).unwrap();
 
         println!("Ask_1: {:?}", ask1);
         println!("Ask_2: {:?}", ask2);
@@ -272,7 +279,10 @@ mod tests {
     }
     #[test]
     fn order_book_priority() {
-        let account = account::Account::new(1e5, 0);
+        let mut market = Market::default();
+
+        let account_id = market.accounts.create_new_account(1e5.into(), 0);
+
         let mut order_book = OrderBook {
             bids: BinaryHeap::new(),
             asks: BinaryHeap::new(),
@@ -283,7 +293,7 @@ mod tests {
             timestamp: NotNan::new(1703713624.0).unwrap(),
             quantity: 10,
             side: Side::Ask,
-            account_id: AccountId::new(&account),
+            account_id: account_id, 
             id: Uuid::new_v4(),
         };
         let ask2 = OrderBase {
@@ -291,7 +301,7 @@ mod tests {
             timestamp: NotNan::new(1703713626.0).unwrap(),
             quantity: 20,
             side: Side::Ask,
-            account_id: AccountId::new(&account),
+            account_id: account_id,
             id: Uuid::new_v4(),
         };
         let ask3 = OrderBase {
@@ -299,7 +309,7 @@ mod tests {
             timestamp: NotNan::new(1703713628.0).unwrap(),
             quantity: 1,
             side: Side::Ask,
-            account_id: AccountId::new(&account),
+            account_id: account_id,
             id: Uuid::new_v4(),
         };
         let ask4 = OrderBase {
@@ -307,7 +317,7 @@ mod tests {
             timestamp: NotNan::new(1703713629.0).unwrap(),
             quantity: 30,
             side: Side::Ask,
-            account_id: AccountId::new(&account),
+            account_id: account_id,
             id: Uuid::new_v4(),
         };
 

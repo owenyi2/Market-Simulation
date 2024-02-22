@@ -3,20 +3,16 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
-use crate::account::{Account, AccountId};
-use crate::order::{OrderBase, OrderBook, Side};
+use crate::account::{Account, AccountId, Accounts};
+use crate::order::{OrderBase, OrderBook};
 
 #[derive(Debug, Default)]
-struct Market {
-    order_book: OrderBook,
-    accounts: HashMap<Uuid, Account>,
+pub struct Market {
+    pub order_book: OrderBook,
+    pub accounts: Accounts,
 }
 
 impl Market {
-    fn add_new_account(&mut self, account: Account) {
-        self.accounts.insert(account.get_id(), account);
-    }
-
     fn handle_incoming_order(&mut self, mut order: OrderBase) {
         let side = order.side;
         let order = loop {
@@ -38,7 +34,7 @@ impl Market {
 
             if matched.quantity == transaction_quantity {
             } else {
-                self.handle_transaction(
+                self.accounts.handle_transaction(
                     aggressor_id,
                     counterparty_id,
                     side,
@@ -52,7 +48,7 @@ impl Market {
             if order.quantity == transaction_quantity {
                 break None;
             } else {
-                self.handle_transaction(
+                self.accounts.handle_transaction(
                     aggressor_id,
                     counterparty_id,
                     side,
@@ -66,97 +62,46 @@ impl Market {
             self.order_book.insert_order(order);
         }
     }
-    fn handle_transaction(
-        &mut self,
-        aggressor_id: AccountId,
-        counterparty_id: AccountId,
-        side: Side,
-        limit: f64,
-        quantity: usize,
-    ) {
-        let aggressor_id = aggressor_id.as_uuid();
-        let counterparty_id = counterparty_id.as_uuid();
-
-        let aggressor = &mut self.accounts.get_mut(&aggressor_id).expect("Account.id and Order.account_id should both private so should not go out of sync. This can still fail if we delete an Account before deleting all outstanding orders. But we haven't implemented delete yet so we're fine for now. I just realised the other way this fails is if we created an account but haven't added it to market.accounts");
-        aggressor.position += (quantity as i32) * (side as i32);
-        aggressor.account_balance -= (quantity as f64) * limit * (side as i32) as f64;
-
-        let counterparty = &mut self
-            .accounts
-            .get_mut(&counterparty_id)
-            .expect("See above expect message");
-
-        counterparty.position -= (quantity as i32) * (side as i32);
-        counterparty.account_balance += (quantity as f64) * limit * (side as i32) as f64;
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::order::Side;
 
-    #[test]
-    fn market_add_new_account() {
-        let mut market = Market::default();
-
-        let account1 = Account::new(1e5, 0);
-        let account2 = Account::new(1e4, 0);
-
-        let account1_id = account1.get_id();
-        let account2_id = account2.get_id();
-
-        market.add_new_account(account1);
-        market.add_new_account(account2);
-
-        // check that the hashmap has stored it
-        let a1 = market.accounts.get(&account1_id).unwrap();
-        let a2 = market.accounts.get(&account2_id).unwrap();
-
-        assert_eq!(a1.get_id(), account1_id);
-        assert_eq!(a2.get_id(), account2_id);
-
-        //and the id in the key and id in the value match
-        //which i mean of course it does. what's the point of this test
-    }
     #[test]
     fn process_orders_1() {
         let mut market = Market::default();
 
-        let alice = Account::new(1e5, 0);
-        let bob = Account::new(1e5, 0);
-
-        let alice_uuid = alice.get_id();
-        let bob_uuid = bob.get_id();
-
-        market.add_new_account(alice);
-        market.add_new_account(bob);
+        let alice_id = market.accounts.create_new_account(1e5.into(), 0);
+        let bob_id = market.accounts.create_new_account(1e5.into(), 0);
 
         let ask1 = OrderBase::build(
             20.,
             10,
             Side::Ask,
-            &market.accounts.get(&alice_uuid).unwrap(),
+            alice_id
         )
         .unwrap();
         let ask2 = OrderBase::build(
             30.,
             20,
             Side::Ask,
-            &market.accounts.get(&alice_uuid).unwrap(),
+            alice_id
         )
         .unwrap();
         let ask3 = OrderBase::build(
             15.,
             1,
             Side::Ask,
-            &market.accounts.get(&alice_uuid).unwrap(),
+            alice_id
         )
         .unwrap();
         let ask4 = OrderBase::build(
             20.,
             30,
             Side::Ask,
-            &market.accounts.get(&alice_uuid).unwrap(),
+            alice_id
         )
         .unwrap();
 
@@ -169,7 +114,7 @@ mod tests {
         market.handle_incoming_order(ask4);
 
         let bid1 =
-            OrderBase::build(21., 23, Side::Bid, &market.accounts.get(&bob_uuid).unwrap()).unwrap();
+            OrderBase::build(21., 23, Side::Bid, bob_id).unwrap();
 
         market.handle_incoming_order(bid1);
 
@@ -193,23 +138,15 @@ mod tests {
     fn process_orders_2() {
         let mut market = Market::default();
 
-        let alice = Account::new(1e5, 0);
-        let bob = Account::new(1e5, 0);
-        let charlie = Account::new(1e5, 0);
-
-        let alice_uuid = alice.get_id();
-        let bob_uuid = bob.get_id();
-        let charlie_uuid = charlie.get_id();
-
-        market.add_new_account(alice);
-        market.add_new_account(bob);
-        market.add_new_account(charlie);
+        let alice_id = market.accounts.create_new_account(1e5.into(), 0);
+        let bob_id = market.accounts.create_new_account(1e5.into(), 0);
+        let charlie_id = market.accounts.create_new_account(1e5.into(), 0);
 
         let bid1 = OrderBase::build(
             121.5,
             20,
             Side::Bid,
-            &market.accounts.get(&bob_uuid).unwrap(),
+            bob_id,
         )
         .unwrap();
         // bid1 causes no transaction
@@ -217,7 +154,7 @@ mod tests {
             121.5,
             20,
             Side::Bid,
-            &market.accounts.get(&bob_uuid).unwrap(),
+            bob_id,
         )
         .unwrap();
         // bid2 causes no transaction
@@ -225,32 +162,28 @@ mod tests {
             121.9,
             10,
             Side::Ask,
-            &market.accounts.get(&alice_uuid).unwrap(),
-        )
+        alice_id)
         .unwrap();
         // ask1 causes no transaction
         let ask2 = OrderBase::build(
             120.1,
             3,
             Side::Ask,
-            &market.accounts.get(&alice_uuid).unwrap(),
-        )
+        alice_id)
         .unwrap();
         // ask2 is cleared and consumes 3 of bid1
         let bid3 = OrderBase::build(
             122.0,
             12,
             Side::Bid,
-            &market.accounts.get(&bob_uuid).unwrap(),
-        )
+        bob_id,)
         .unwrap();
         // bid3 consumes 10 of ask1 (clearing it)
         let ask3 = OrderBase::build(
             119.0,
             38,
             Side::Ask,
-            &market.accounts.get(&charlie_uuid).unwrap(),
-        )
+        charlie_id)
         .unwrap();
         // ask3 first consumes 17 of bid1 (clearing it). then consumes 1 of bid3 (clearing it). then consumes 19 of bid2.
 
@@ -276,20 +209,10 @@ mod tests {
     fn process_orders_3() {
         let mut market = Market::default();
 
-        let alice = Account::new(1e5, 0);
-        let bob = Account::new(1e5, 0);
-        let charlie = Account::new(1e5, 1000);
-        let dan = Account::new(1e5, 1000);
-
-        let alice_uuid = alice.get_id();
-        let bob_uuid = bob.get_id();
-        let charlie_uuid = charlie.get_id();
-        let dan_uuid = dan.get_id();
-
-        market.add_new_account(alice);
-        market.add_new_account(bob);
-        market.add_new_account(charlie);
-        market.add_new_account(dan);
+        let alice_id = market.accounts.create_new_account(1e5.into(), 0);
+        let bob_id = market.accounts.create_new_account(1e5.into(), 0);
+        let charlie_id = market.accounts.create_new_account(1e5.into(), 1000);
+        let dan_id = market.accounts.create_new_account(1e5.into(), 1000);
 
         // Alice sets up the following:
         // - 30 @ 60.01 bid / 12 @ 60.11 ask
@@ -298,7 +221,7 @@ mod tests {
                 60.01,
                 30,
                 Side::Bid,
-                &market.accounts.get(&alice_uuid).unwrap(),
+                alice_id,
             )
             .unwrap(),
         );
@@ -307,7 +230,7 @@ mod tests {
                 60.11,
                 12,
                 Side::Ask,
-                &market.accounts.get(&alice_uuid).unwrap(),
+        alice_id,
             )
             .unwrap(),
         );
@@ -319,8 +242,7 @@ mod tests {
                 60.08,
                 100,
                 Side::Bid,
-                &market.accounts.get(&bob_uuid).unwrap(),
-            )
+            bob_id)
             .unwrap(),
         );
         market.handle_incoming_order(
@@ -328,8 +250,7 @@ mod tests {
                 60.20,
                 10,
                 Side::Ask,
-                &market.accounts.get(&bob_uuid).unwrap(),
-            )
+            bob_id)
             .unwrap(),
         );
 
@@ -340,8 +261,7 @@ mod tests {
                 60.02,
                 15,
                 Side::Bid,
-                &market.accounts.get(&alice_uuid).unwrap(),
-            )
+            alice_id)
             .unwrap(),
         );
         market.handle_incoming_order(
@@ -349,8 +269,7 @@ mod tests {
                 60.08,
                 14,
                 Side::Ask,
-                &market.accounts.get(&alice_uuid).unwrap(),
-            )
+            alice_id)
             .unwrap(),
         );
 
@@ -361,8 +280,7 @@ mod tests {
                 60.01,
                 120,
                 Side::Ask,
-                &market.accounts.get(&charlie_uuid).unwrap(),
-            )
+            charlie_id)
             .unwrap(),
         );
 
@@ -373,8 +291,7 @@ mod tests {
                 60.11,
                 20,
                 Side::Bid,
-                &market.accounts.get(&dan_uuid).unwrap(),
-            )
+            dan_id)
             .unwrap(),
         );
         market.handle_incoming_order(
@@ -382,15 +299,14 @@ mod tests {
                 60.3,
                 10,
                 Side::Ask,
-                &market.accounts.get(&dan_uuid).unwrap(),
-            )
+            dan_id)
             .unwrap(),
         );
 
-        let alice_account = market.accounts.get(&alice_uuid).unwrap();
-        let bob_account = market.accounts.get(&bob_uuid).unwrap();
-        let charlie_account = market.accounts.get(&charlie_uuid).unwrap();
-        let dan_account = market.accounts.get(&dan_uuid).unwrap();
+        let alice_account = market.accounts.get(&alice_id);
+        let bob_account = market.accounts.get(&bob_id);
+        let charlie_account = market.accounts.get(&charlie_id);
+        let dan_account = market.accounts.get(&dan_id);
 
         println!("{:#?}", &alice_account);
         println!("{:#?}", &bob_account);
