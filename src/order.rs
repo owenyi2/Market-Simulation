@@ -1,11 +1,11 @@
 use std::cmp::{Ordering};
-use std::collections::BinaryHeap;
 use std::error::Error;
 use std::ops::Neg;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ordered_float::NotNan;
 use uuid::Uuid;
+use keyed_priority_queue::KeyedPriorityQueue;
 
 use crate::account::{Account, AccountId};
 
@@ -13,29 +13,29 @@ use crate::account::{Account, AccountId};
 
 #[derive(Debug, Default)]
 pub struct OrderBook {
-    bids: BinaryHeap<BidOrder>,
-    asks: BinaryHeap<AskOrder>,
+    bids: KeyedPriorityQueue<OrderId, BidOrder>,
+    asks: KeyedPriorityQueue<OrderId, AskOrder>,
 }
 
 impl OrderBook {
     pub fn get_best_counter(&self, side: Side) -> Option<&OrderBase> {
         match side {
-            Side::Ask => Some(&self.bids.peek()?.order),
-            Side::Bid => Some(&self.asks.peek()?.order),
+            Side::Ask => Some(&self.bids.peek()?.1.order),
+            Side::Bid => Some(&self.asks.peek()?.1.order),
         }
     }
     // this is a bit counterintuitive of an API, we should do pop_best and get_best with side
     // if the called wants the opposite they should use -side because we impl Neg already
     pub fn pop_best_counter(&mut self, side: Side) -> Option<OrderBase> {
         match side {
-            Side::Ask => Some(self.bids.pop()?.order),
-            Side::Bid => Some(self.asks.pop()?.order),
+            Side::Ask => Some(self.bids.pop()?.1.order),
+            Side::Bid => Some(self.asks.pop()?.1.order),
         }
     }
     pub fn insert_order(&mut self, order: OrderBase) {
         match order.side {
-            Side::Ask => self.asks.push(AskOrder { order }),
-            Side::Bid => self.bids.push(BidOrder { order }),
+            Side::Ask => { self.asks.push(OrderId::new(&order), AskOrder { order }); },
+            Side::Bid => { self.bids.push(OrderId::new(&order), BidOrder { order }); },
         }
     }
     pub fn is_empty(&self, side: Side) -> bool {
@@ -60,6 +60,16 @@ impl Neg for Side {
             Side::Ask => Side::Bid,
             Side::Bid => Side::Ask,
         }
+    }
+}
+
+#[derive(Debug, Eq, Hash, PartialEq, Copy, Clone)]
+pub struct OrderId {
+    order_id: Uuid
+}
+impl OrderId {
+    fn new(order: &OrderBase) -> OrderId {
+        OrderId { order_id: order.id }
     }
 }
 
@@ -270,10 +280,7 @@ mod tests {
     }
     #[test]
     fn is_empty() {
-        let order_book = OrderBook {
-            bids: BinaryHeap::new(),
-            asks: BinaryHeap::new(),
-        };
+        let order_book = OrderBook::default();
         assert!(order_book.is_empty(Side::Ask));
         assert!(order_book.is_empty(Side::Bid));
     }
@@ -283,10 +290,7 @@ mod tests {
 
         let account_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
 
-        let mut order_book = OrderBook {
-            bids: BinaryHeap::new(),
-            asks: BinaryHeap::new(),
-        };
+        let mut order_book = OrderBook::default();
 
         let ask1 = OrderBase {
             limit: NotNan::new(20.).unwrap(),

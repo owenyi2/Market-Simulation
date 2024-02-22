@@ -11,3 +11,4 @@ axum = {version="0.7", features=["macros"]}
 serde = {version="1", features=["derive"]}
 ordered-float = "4.2"
 uuid = {version="1.7", features=["v4", "fast-rng"]}
+keyed_priority_queue = "0.4.2"
