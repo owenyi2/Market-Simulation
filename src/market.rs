@@ -1,10 +1,10 @@
-use std::cmp::{min, Ordering};
-use std::collections::{BinaryHeap, HashMap};
+use std::cmp::min;
+use std::collections::HashMap;
 
 use uuid::Uuid;
 
 use crate::account::{Account, AccountId};
-use crate::order::{self, OrderBase, OrderBook, Side};
+use crate::order::{OrderBase, OrderBook, Side};
 
 #[derive(Debug, Default)]
 struct Market {
@@ -77,11 +77,11 @@ impl Market {
         let aggressor_id = aggressor_id.as_uuid();
         let counterparty_id = counterparty_id.as_uuid();
 
-        let mut aggressor = &mut self.accounts.get_mut(&aggressor_id).expect("Account.id and Order.account_id should both private so should not go out of sync. This can still fail if we delete an Account before deleting all outstanding orders. But we haven't implemented delete yet so we're fine for now. I just realised the other way this fails is if we created an account but haven't added it to market.accounts");
+        let aggressor = &mut self.accounts.get_mut(&aggressor_id).expect("Account.id and Order.account_id should both private so should not go out of sync. This can still fail if we delete an Account before deleting all outstanding orders. But we haven't implemented delete yet so we're fine for now. I just realised the other way this fails is if we created an account but haven't added it to market.accounts");
         aggressor.position += (quantity as i32) * (side as i32);
         aggressor.account_balance -= (quantity as f64) * limit * (side as i32) as f64;
 
-        let mut counterparty = &mut self
+        let counterparty = &mut self
             .accounts
             .get_mut(&counterparty_id)
             .expect("See above expect message");
@@ -94,11 +94,9 @@ impl Market {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ordered_float::NotNan;
-    use uuid::Uuid;
 
     #[test]
-    fn Market_add_new_account() {
+    fn market_add_new_account() {
         let mut market = Market::default();
 
         let account1 = Account::new(1e5, 0);

@@ -1,4 +1,4 @@
-use std::cmp::{min, Ordering};
+use std::cmp::{Ordering};
 use std::collections::BinaryHeap;
 use std::error::Error;
 use std::ops::Neg;
@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ordered_float::NotNan;
 use uuid::Uuid;
 
-use crate::account::{self, Account, AccountId};
+use crate::account::{Account, AccountId};
 
 // consider pub (super)
 
@@ -159,23 +159,6 @@ impl PartialEq for BidOrder {
 
 impl Eq for BidOrder {}
 
-pub trait IntoOrderBase {
-    fn into_order_base(self) -> OrderBase;
-}
-
-impl IntoOrderBase for BidOrder {
-    fn into_order_base(self) -> OrderBase {
-        self.order
-    }
-}
-
-impl IntoOrderBase for AskOrder {
-    fn into_order_base(self) -> OrderBase {
-        self.order
-    }
-}
-// so that Market.order_book is a HashMap<Side, BinaryHeap<Order>>
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,7 +166,7 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn AskOrdering() {
+    fn ask_ordering() {
         let account = account::Account::new(1e5, 0);
 
         let ask1 = AskOrder {
@@ -210,7 +193,7 @@ mod tests {
         assert!(ask2 > ask1);
     }
     #[test]
-    fn BidOrdering() {
+    fn bid_ordering() {
         let account = account::Account::new(1e5, 0);
 
         let bid1 = BidOrder {
@@ -261,9 +244,8 @@ mod tests {
         assert!(bid3 > bid4);
     }
     #[test]
-    fn OrderBaseBuilder() {
+    fn order_base_builder() {
         let alice = Account::new(1e5, 0);
-        let bob = Account::new(1e5, 0);
 
         let ask1 = OrderBase::build(20., 10, Side::Ask, &alice).unwrap();
         let ask2 = OrderBase::build(30., 20, Side::Ask, &alice).unwrap();
@@ -281,7 +263,7 @@ mod tests {
     }
     #[test]
     fn is_empty() {
-        let mut order_book = OrderBook {
+        let order_book = OrderBook {
             bids: BinaryHeap::new(),
             asks: BinaryHeap::new(),
         };
@@ -289,7 +271,7 @@ mod tests {
         assert!(order_book.is_empty(Side::Bid));
     }
     #[test]
-    fn OrderBookPriority() {
+    fn order_book_priority() {
         let account = account::Account::new(1e5, 0);
         let mut order_book = OrderBook {
             bids: BinaryHeap::new(),
