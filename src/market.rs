@@ -33,7 +33,8 @@ impl Market {
             let transaction_quantity = min(order.quantity, matched.quantity);
 
             if matched.quantity == transaction_quantity {
-            } else {
+            } else { // possible refactor: 
+            // have a self.handle_transaction which calls accounts.handle_transaction as one of the subtasks. I anticipate that more and more functionality will need to be implemented to properly facilitate a transaction e.g. updating the existing orders tracked by accounts. We may also want to make this async in which case, we would want to delegate processing into an await block. This function should only determine if a transaction can be made
                 self.accounts.handle_transaction(
                     aggressor_id,
                     counterparty_id,

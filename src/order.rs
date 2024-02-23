@@ -44,6 +44,15 @@ impl OrderBook {
             Side::Bid => self.bids.is_empty(),
         }
     }
+    pub fn delete_order(&mut self, order_id: OrderId) -> Option<OrderBase> {
+        if let Some(ask_order) = self.asks.remove(&order_id) {
+            return Some(ask_order.order);
+        }
+        if let Some(bid_order) = self.bids.remove(&order_id) {
+            return Some(bid_order.order);
+        }
+        None  
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
