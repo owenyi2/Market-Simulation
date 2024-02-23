@@ -31,31 +31,24 @@ impl Market {
             let aggressor_id = order.account_id;
             let counterparty_id = matched.account_id;
             let transaction_quantity = min(order.quantity, matched.quantity);
+ 
+            self.accounts.handle_transaction(
+                aggressor_id,
+                counterparty_id,
+                side,
+                f64::from(order.limit),
+                transaction_quantity,
+            );
 
             if matched.quantity == transaction_quantity {
             } else { // possible refactor: 
             // have a self.handle_transaction which calls accounts.handle_transaction as one of the subtasks. I anticipate that more and more functionality will need to be implemented to properly facilitate a transaction e.g. updating the existing orders tracked by accounts. We may also want to make this async in which case, we would want to delegate processing into an await block. This function should only determine if a transaction can be made
-                self.accounts.handle_transaction(
-                    aggressor_id,
-                    counterparty_id,
-                    side,
-                    f64::from(order.limit),
-                    transaction_quantity,
-                );
-
                 matched.quantity -= transaction_quantity;
                 self.order_book.insert_order(matched);
             }
             if order.quantity == transaction_quantity {
                 break None;
             } else {
-                self.accounts.handle_transaction(
-                    aggressor_id,
-                    counterparty_id,
-                    side,
-                    f64::from(order.limit),
-                    transaction_quantity,
-                );
                 order.quantity -= transaction_quantity;
             }
         };
@@ -305,6 +298,17 @@ mod tests {
             .unwrap(),
         );
 
+        // Alice sets up the following
+        // - 8 @ 60.09 ask
+        market.handle_incoming_order(
+                OrderBase::build(
+                    60.08,
+                    8,
+                    Side::Ask,
+                    alice_id,
+                    ).unwrap(),
+                );
+
         let alice_account = market.accounts.get(&alice_id);
         let bob_account = market.accounts.get(&bob_id);
         let charlie_account = market.accounts.get(&charlie_id);
@@ -328,25 +332,19 @@ mod tests {
 
         let best_bid = market.order_book.pop(Side::Bid).unwrap();
 
-        assert_eq!(best_bid.limit.into_inner(), 60.11);
-        assert_eq!(best_bid.quantity, 8);
-
-        let best_bid = market.order_book.pop(Side::Bid).unwrap();
-
         assert_eq!(best_bid.limit.into_inner(), 60.01);
         assert_eq!(best_bid.quantity, 11);
 
         assert!(market.order_book.is_empty(Side::Ask));
         assert!(market.order_book.is_empty(Side::Bid));
 
-        assert_eq!(alice_account.account_balance.into_inner(), 99522.1);
-        assert_eq!(alice_account.position, 8);
+        assert_eq!(alice_account.account_balance.into_inner(), 100002.74);
+        assert_eq!(alice_account.position, 0);
         assert_eq!(bob_account.account_balance.into_inner(), 93998.02);
         assert_eq!(bob_account.position, 100);
         assert_eq!(charlie_account.account_balance.into_inner(), 107201.2);
         assert_eq!(charlie_account.position, 880);
-        assert_eq!(dan_account.account_balance.into_inner(), 99278.68);
-        assert_eq!(dan_account.position, 1012);
-
+        assert_eq!(dan_account.account_balance.into_inner(), 98798.04);
+        assert_eq!(dan_account.position, 1020);
     }
 }
