@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use ordered_float::NotNan;
 use uuid::Uuid;
+use serde::{Serialize, Deserialize};
 
 use super::order::Side; 
-
 
 #[derive(Debug, Eq, Hash, PartialEq, Copy, Clone)]
 pub struct AccountId {
@@ -17,9 +17,7 @@ impl AccountId {
             account_id: account.id,
         }
     }
-    // It makes more sense to only create an AccountId if the account has been stored in a market. So the constructor should take a uuid, validate if the uuid is in the market.accounts HashMap then return a Result rather than an AccountId
-    // TODO: Refactor as per above. Jokes, our unit tests are not really unit tests e.g. unit tests for Order need an account instance to create an Order. To solve this we could make orderbase an actual order base, then derive other stuff on top but that's fucked + a lot of code edits are propagated from that. ok this refactor if done, will require a market instance in the order unit test. Oh well.
-    fn as_uuid(self) -> Uuid {
+    pub fn as_uuid(self) -> Uuid {
         self.account_id
     }
 }
@@ -27,12 +25,12 @@ impl AccountId {
 #[derive(Debug)]
 pub struct Account {
     id: Uuid,
-    pub account_balance: NotNan<f64>,
-    pub position: i32,
+    account_balance: NotNan<f64>,
+    position: i32,
 }
 
 impl Account {
-    pub fn new(account_balance: NotNan<f64>, position: i32) -> Account {
+    fn new(account_balance: NotNan<f64>, position: i32) -> Account {
         Account {
             id: Uuid::new_v4(),
             account_balance,
@@ -42,23 +40,43 @@ impl Account {
     pub fn get_id(&self) -> Uuid {
         self.id
     }
+    pub fn view(&self) -> AccountView {
+        AccountView {
+            id: self.id.to_string(),
+            account_balance: self.account_balance.into_inner(),
+            position: self.position
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct AccountView {
+    id: String,
+    account_balance: f64,
+    position: i32
 }
 
 #[derive(Debug, Default)]
 pub struct Accounts {
-    accounts: HashMap<AccountId, Account>
+    accounts: HashMap<Uuid, Account>
 }
 
 impl Accounts {
     pub fn create_new_account(&mut self, account_balance: NotNan<f64>, position: i32) -> AccountId {
         let account = Account::new(account_balance, position);
         let accountId = AccountId::new(&account);
-        self.accounts.insert(accountId, account);
+        self.accounts.insert(accountId.as_uuid(), account);
 
         accountId
     }
+    pub fn check_uuid(&self, uuid: Uuid) -> Option<AccountId> {
+        let Some(account) = self.accounts.get(&uuid) else {
+            return None
+        };
+        Some(AccountId::new(&account))
+    }
     pub fn get(&self, account_id: &AccountId) -> &Account {
-        self.accounts.get(account_id).expect(
+        self.accounts.get(&account_id.as_uuid()).expect(
             "AccountId and Account can only be created within account module \
             or via Accounts::create_new_account which inserts the corresponding AccountId and Account \
             Account's cannot be deleted from Accounts"
@@ -70,15 +88,16 @@ impl Accounts {
         // The destructor needs to also delete any AccountId associated. Wow this is complicated
     }
     pub fn handle_transaction(&mut self, aggressor_id: AccountId, counterparty_id: AccountId, side: Side, limit: f64, quantity: usize) {
-        let aggressor = &mut self.accounts.get_mut(&aggressor_id).unwrap();
+        let aggressor = &mut self.accounts.get_mut(&aggressor_id.as_uuid()).unwrap();
         aggressor.position += (quantity as i32) * (side as i32);
         aggressor.account_balance -= (quantity as f64) * limit * (side as i32) as f64;
 
-        let counterparty = &mut self.accounts.get_mut(&counterparty_id).unwrap();
+        let counterparty = &mut self.accounts.get_mut(&counterparty_id.as_uuid()).unwrap();
         counterparty.position -= (quantity as i32) * (side as i32);
         counterparty.account_balance += (quantity as f64) * limit * (side as i32) as f64;
     } 
 }
+
 //SHOULD DO: implement Drop for Account to clean up any orders in the orderbook and refuse any orders tied to Account. Not important now, because we're not going to delete an Account.
 
 #[cfg(test)]

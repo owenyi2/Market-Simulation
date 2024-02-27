@@ -1,61 +1,70 @@
 use std::cmp::min;
+use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 
 use uuid::Uuid;
+use ordered_float::NotNan;
 
 use crate::account::{Account, AccountId, Accounts};
 use crate::order::{OrderBase, OrderBook};
 
 #[derive(Debug, Default)]
 pub struct Market {
-    pub order_book: OrderBook,
-    pub accounts: Accounts,
+    order_book: Mutex<OrderBook>,
+    pub accounts: Mutex<Accounts>,
 }
 
 impl Market {
-    fn handle_incoming_order(&mut self, mut order: OrderBase) {
-        let side = order.side;
-        let order = loop {
-            let best_counter = self.order_book.peek(-side);
-            match best_counter {
-                Some(counter) => {
-                    if counter.limit * f64::from(side as i32) > order.limit * f64::from(side as i32)
-                    {
-                        break Some(order);
-                    }
-                }
-                None => break Some(order),
-            }
-
-            let mut matched = self.order_book.pop(-side).unwrap();
-            let aggressor_id = order.account_id;
-            let counterparty_id = matched.account_id;
-            let transaction_quantity = min(order.quantity, matched.quantity);
- 
-            self.accounts.handle_transaction(
-                aggressor_id,
-                counterparty_id,
-                side,
-                f64::from(order.limit),
-                transaction_quantity,
-            );
-
-            if matched.quantity == transaction_quantity {
-            } else { // possible refactor: 
-            // have a self.handle_transaction which calls accounts.handle_transaction as one of the subtasks. I anticipate that more and more functionality will need to be implemented to properly facilitate a transaction e.g. updating the existing orders tracked by accounts. We may also want to make this async in which case, we would want to delegate processing into an await block. This function should only determine if a transaction can be made
-                matched.quantity -= transaction_quantity;
-                self.order_book.insert_order(matched);
-            }
-            if order.quantity == transaction_quantity {
-                break None;
-            } else {
-                order.quantity -= transaction_quantity;
-            }
+    pub fn new_account(self: Arc<Self>, account_balance: f64, position: i32) -> Result<AccountId, &'static str> {
+        let Ok(account_balance) = NotNan::new(account_balance) else {
+            return Err("Invalid Account balance");
         };
-        if let Some(order) = order {
-            self.order_book.insert_order(order);
-        }
-    }
+        Ok(self.accounts.lock().unwrap().create_new_account(account_balance, position))
+    } 
+
+//    pub fn handle_incoming_order(&mut self, mut order: OrderBase) {
+//        let side = order.side;
+//        let order = loop {
+//            let best_counter = self.order_book.peek(-side);
+//            match best_counter {
+//                Some(counter) => {
+//                    if counter.limit * f64::from(side as i32) > order.limit * f64::from(side as i32)
+//                    {
+//                        break Some(order);
+//                    }
+//                }
+//                None => break Some(order),
+//            }
+//
+//            let mut matched = self.order_book.pop(-side).unwrap();
+//            let aggressor_id = order.account_id;
+//            let counterparty_id = matched.account_id;
+//            let transaction_quantity = min(order.quantity, matched.quantity);
+// 
+//            self.accounts.handle_transaction(
+//                aggressor_id,
+//                counterparty_id,
+//                side,
+//                f64::from(order.limit),
+//                transaction_quantity,
+//            );
+//
+//            if matched.quantity == transaction_quantity {
+//            } else { // possible refactor: 
+//            // have a self.handle_transaction which calls accounts.handle_transaction as one of the subtasks. I anticipate that more and more functionality will need to be implemented to properly facilitate a transaction e.g. updating the existing orders tracked by accounts. We may also want to make this async in which case, we would want to delegate processing into an await block. This function should only determine if a transaction can be made
+//                matched.quantity -= transaction_quantity;
+//                self.order_book.insert_order(matched);
+//            }
+//            if order.quantity == transaction_quantity {
+//                break None;
+//            } else {
+//                order.quantity -= transaction_quantity;
+//            }
+//        };
+//        if let Some(order) = order {
+//            self.order_book.insert_order(order);
+//        }
+//    }
 }
 
 #[cfg(test)]

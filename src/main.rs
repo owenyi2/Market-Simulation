@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{sync::{Mutex, RwLock}, runtime::Builder};
 
 mod controllers;
-use controllers::{account,market,order};
+use market_simulation::market;
 
 fn main() {
     let api_runtime = Builder::new_multi_thread()
@@ -33,13 +33,15 @@ fn main() {
 async fn app_main() {
     println!("Hello app");
 
+    let market = Arc::new(market::Market::default());
 
     let api_route = Router::new()
-        .route("/api/account/new", post(account::new_account))
-        .route("/api/account", get(account::get_account))
-        .route("/api/order/:id", get(order::get_order_by_id).delete(order::delete_order_by_id))
-        .route("/api/order/new", post(order::new_order))
-        .route("/api/order", get(order::get_all_orders))
+        .route("/api/account/new", post(controllers::account::new_account))
+        .route("/api/account", get(controllers::account::get_account))
+        .route("/api/order/:id", get(controllers::order::get_order_by_id).delete(controllers::order::delete_order_by_id))
+        .route("/api/order/new", post(controllers::order::new_order))
+        .route("/api/order", get(controllers::order::get_all_orders))
+        .with_state(market)
         .fallback(fallback);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000"
             ).await.unwrap();
