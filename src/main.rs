@@ -18,12 +18,7 @@ use tokio::{sync::{Mutex, RwLock}, runtime::Builder};
 mod controllers;
 use controllers::{account,market,order};
 
-
 fn main() {
-    let logic_handler = thread::spawn(|| {
-        logic_main()
-    }); 
-
     let api_runtime = Builder::new_multi_thread()
         .worker_threads(8)
         .enable_all()
@@ -35,27 +30,20 @@ fn main() {
     )
 }
 
-fn logic_main() {
-    loop {
-        let ten_secs = time::Duration::from_secs(10); 
-        println!("sleeping");
-        thread::sleep(ten_secs);
-    }
-}
-
 async fn app_main() {
     println!("Hello app");
 
+
     let api_route = Router::new()
-        .route("/api/account", get(account::get_account).post(account::post_account))
-        .route("/api/market/", get(market::get_market)) 
-        .route("/api/order", get(order::get_order).post(order::post_order).delete(order::delete_order))
+        .route("/api/account/new", post(account::new_account))
+        .route("/api/account", get(account::get_account))
+        .route("/api/order/:id", get(order::get_order_by_id).delete(order::delete_order_by_id))
+        .route("/api/order/new", post(order::new_order))
+        .route("/api/order", get(order::get_all_orders))
         .fallback(fallback);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000"
             ).await.unwrap();
-    axum::serve(listener, api_route).await.unwrap();
-    
-        
+    axum::serve(listener, api_route).await.unwrap();        
 }
 
 async fn fallback() -> (StatusCode, &'static str) {
