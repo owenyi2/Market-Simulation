@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use market_simulation::{market, account::AccountId};
-use super::{parse_account_id_from_header, AccountIdError};
+use super::{parse_account_id_from_header, AppError};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AccountReqBody {
@@ -26,10 +26,12 @@ pub async fn new_account(State(market): State<Arc<market::Market>>, Json(account
     account_id.as_uuid().to_string().into_response()
 }
 
-pub async fn get_account(State(market): State<Arc<market::Market>>, headers: HeaderMap) -> Result<Response, AccountIdError> { 
-    let account_id = parse_account_id_from_header(market.clone(), headers)?;
-
+pub async fn get_account(State(market): State<Arc<market::Market>>, headers: HeaderMap) -> Result<Response, AppError> {
+    let account_id = parse_account_id_from_header(headers)?;
+  
     let accounts = market.accounts.lock().unwrap();
+    let account_id = accounts.check_uuid(account_id).ok_or(AppError::AccountDoesNotExist)?;
+    
     let account = accounts.get(&account_id);
     Ok(Json(account.view()).into_response())
 }
