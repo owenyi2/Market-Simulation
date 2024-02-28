@@ -6,9 +6,13 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use market_simulation::order;
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct OrderRequestBody {
-
+    limit: f64,
+    quantity: usize,
+    side: order::Side
 }
 
 pub async fn get_order_by_id(headers: HeaderMap, Path(order_id): Path<String>) -> impl IntoResponse { 

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use market_simulation::{market, account::AccountId};
+use super::{parse_account_id_from_header, AccountIdError};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AccountReqBody {
@@ -25,22 +26,10 @@ pub async fn new_account(State(market): State<Arc<market::Market>>, Json(account
     account_id.as_uuid().to_string().into_response()
 }
 
-pub async fn get_account(State(market): State<Arc<market::Market>>, headers: HeaderMap) -> impl IntoResponse { 
-    let Some(account_id) = headers.get("account-id") else {
-        return (StatusCode::BAD_REQUEST, "`account-id` missing in Header").into_response()
-    };
-    let Ok(account_id) = account_id.to_str() else {
-        return (StatusCode::BAD_REQUEST, "`account-id` is invalid").into_response()
-    };
-    let Ok(account_id) = Uuid::try_parse(account_id) else {
-        return (StatusCode::BAD_REQUEST, "`account-id` is invalid").into_response()
-    };
-    
-    let accounts = market.accounts.lock().unwrap();
-    let Some(account_id) = accounts.check_uuid(account_id) else {
-        return (StatusCode::FORBIDDEN, "this `account-id` doesn't exist").into_response()
-    };
+pub async fn get_account(State(market): State<Arc<market::Market>>, headers: HeaderMap) -> Result<Response, AccountIdError> { 
+    let account_id = parse_account_id_from_header(market.clone(), headers)?;
 
+    let accounts = market.accounts.lock().unwrap();
     let account = accounts.get(&account_id);
-    Json(account.view()).into_response() 
+    Ok(Json(account.view()).into_response())
 }

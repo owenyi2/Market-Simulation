@@ -19,10 +19,10 @@ echo "[GET] /account/"
 curl \
     -H "account-id: ${ACCOUNT_ID_1}" \
     -X GET \
-    "http://localhost:3000/api/account"
+    "http://localhost:3000/api/account" && echo
 
 echo "[GET] /account/"
 curl \
     -H "account-id: ${ACCOUNT_ID_2}" \
     -X GET \
-    "http://localhost:3000/api/account"
+    "http://localhost:3000/api/account" && echo

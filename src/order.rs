@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ordered_float::NotNan;
 use uuid::Uuid;
 use keyed_priority_queue::KeyedPriorityQueue;
+use serde::{Serialize, Deserialize};
 
 use crate::account::{Account, AccountId};
 
@@ -55,7 +56,7 @@ impl OrderBook {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum Side {
     Ask = -1,
     Bid = 1,
