@@ -1,12 +1,13 @@
-use std::cmp::{Ordering};
+use std::cmp::Ordering;
 use std::error::Error;
 use std::ops::Neg;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::VecDeque;
 
-use ordered_float::NotNan;
-use uuid::Uuid;
 use keyed_priority_queue::KeyedPriorityQueue;
-use serde::{Serialize, Deserialize};
+use ordered_float::NotNan;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::account::{Account, AccountId};
 
@@ -14,8 +15,8 @@ use crate::account::{Account, AccountId};
 
 #[derive(Debug, Default)]
 pub struct OrderBook {
-    bids: KeyedPriorityQueue<OrderId, BidOrder>,
-    asks: KeyedPriorityQueue<OrderId, AskOrder>,
+    bids: KeyedPriorityQueue<Uuid, BidOrder>,
+    asks: KeyedPriorityQueue<Uuid, AskOrder>,
 }
 
 impl OrderBook {
@@ -35,8 +36,12 @@ impl OrderBook {
     }
     pub fn insert_order(&mut self, order: OrderBase) {
         match order.side {
-            Side::Ask => { self.asks.push(OrderId::new(&order), AskOrder { order }); },
-            Side::Bid => { self.bids.push(OrderId::new(&order), BidOrder { order }); },
+            Side::Ask => {
+                self.asks.push(order.id, AskOrder { order });
+            }
+            Side::Bid => {
+                self.bids.push(order.id, BidOrder { order });
+            }
         }
     }
     pub fn is_empty(&self, side: Side) -> bool {
@@ -45,16 +50,37 @@ impl OrderBook {
             Side::Bid => self.bids.is_empty(),
         }
     }
-    pub fn delete_order(&mut self, order_id: OrderId) -> Option<OrderBase> {
+    pub fn delete_order(&mut self, order_id: Uuid) -> Option<OrderBase> {
         if let Some(ask_order) = self.asks.remove(&order_id) {
             return Some(ask_order.order);
         }
         if let Some(bid_order) = self.bids.remove(&order_id) {
             return Some(bid_order.order);
         }
-        None  
+        None
     }
 }
+
+#[derive(Debug)]
+pub struct ProcessedOrders {
+    orders: VecDeque<OrderBase>,
+    capacity: usize
+}
+
+impl ProcessedOrders {
+    pub fn new() -> ProcessedOrders {
+        ProcessedOrders {
+            orders: VecDeque::with_capacity(64),
+            capacity: 64
+        }
+    }
+    pub fn push(&mut self, order: OrderBase) {
+        if self.orders.len() >= self.capacity {
+            self.orders.pop_front();
+        }
+        self.orders.push_back(order);
+    }
+} 
 
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum Side {
@@ -73,14 +99,12 @@ impl Neg for Side {
     }
 }
 
-#[derive(Debug, Eq, Hash, PartialEq, Copy, Clone)]
-pub struct OrderId {
-    order_id: Uuid
-}
-impl OrderId {
-    fn new(order: &OrderBase) -> OrderId {
-        OrderId { order_id: order.id }
-    }
+#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum Status {
+    Created,
+    Pending,
+    Executed,
+    Cancelled,
 }
 
 #[derive(Debug)]
@@ -91,6 +115,7 @@ pub struct OrderBase {
     pub side: Side,
     pub account_id: AccountId,
     id: Uuid,
+    pub status: Status
 }
 
 // Make this a builder instead of a new
@@ -109,10 +134,22 @@ impl OrderBase {
             side,
             account_id,
             id: Uuid::new_v4(),
+            status: Status::Created,
         })
     }
     pub fn get_id(&self) -> Uuid {
         self.id
+    }
+    pub fn view(&self) -> OrderView {
+        OrderView {
+            limit: self.limit.into_inner(),
+            timestamp: self.limit.into_inner(),
+            quantity: self.quantity,
+            side: self.side,
+            account_id: self.account_id.as_uuid().to_string(),
+            id: self.id.to_string(),
+            status: self.status
+        }
     }
 }
 
@@ -122,6 +159,17 @@ impl PartialEq for OrderBase {
     }
 }
 impl Eq for OrderBase {}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OrderView {
+    pub limit: f64,
+    pub timestamp: f64,
+    pub quantity: usize,
+    pub side: Side,
+    pub account_id: String,
+    pub id: String,
+    pub status: Status,
+}
 
 #[derive(Debug)]
 struct AskOrder {
@@ -184,13 +232,11 @@ mod tests {
     use super::*;
     use crate::account;
     use uuid::Uuid;
-    use crate::market::Market;
 
     #[test]
     fn ask_ordering() {
-        let mut market = Market::default();
-
-        let account_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
+        let mut accounts = account::Accounts::default();
+        let account_id = accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
 
         let ask1 = AskOrder {
             order: OrderBase {
@@ -200,6 +246,7 @@ mod tests {
                 side: Side::Ask,
                 account_id: account_id,
                 id: Uuid::new_v4(),
+                status: Status::Created,
             },
         };
         let ask2 = AskOrder {
@@ -210,16 +257,16 @@ mod tests {
                 side: Side::Ask,
                 account_id: account_id,
                 id: Uuid::new_v4(),
+                status: Status::Created,
             },
         };
         // ask2 should be higher priority than ask1 because it has a lower limit price
         assert!(ask2 > ask1);
     }
     #[test]
-    fn bid_ordering() { 
-        let mut market = Market::default();
-
-        let account_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
+    fn bid_ordering() {
+        let mut accounts = account::Accounts::default();
+        let account_id = accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
 
         let bid1 = BidOrder {
             order: OrderBase {
@@ -229,6 +276,7 @@ mod tests {
                 side: Side::Bid,
                 account_id: account_id,
                 id: Uuid::new_v4(),
+                status: Status::Created,
             },
         };
         let bid2 = BidOrder {
@@ -239,6 +287,7 @@ mod tests {
                 side: Side::Bid,
                 account_id: account_id,
                 id: Uuid::new_v4(),
+                status: Status::Created,
             },
         };
         let bid3 = BidOrder {
@@ -249,6 +298,7 @@ mod tests {
                 side: Side::Bid,
                 account_id: account_id,
                 id: Uuid::new_v4(),
+                status: Status::Created,
             },
         };
         let bid4 = BidOrder {
@@ -259,6 +309,7 @@ mod tests {
                 side: Side::Bid,
                 account_id: account_id,
                 id: Uuid::new_v4(),
+                status: Status::Created,
             },
         };
         // bid1 has same limit price as bid2 but bid1 was submitted earlier
@@ -269,10 +320,9 @@ mod tests {
         assert!(bid3 > bid4);
     }
     #[test]
-    fn order_base_builder() { 
-        let mut market = Market::default();
-
-        let account_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
+    fn order_base_builder() {
+        let mut accounts = account::Accounts::default();
+        let account_id = accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
 
         let ask1 = OrderBase::build(20., 10, Side::Ask, account_id).unwrap();
         let ask2 = OrderBase::build(30., 20, Side::Ask, account_id).unwrap();
@@ -296,9 +346,8 @@ mod tests {
     }
     #[test]
     fn order_book_priority() {
-        let mut market = Market::default();
-
-        let account_id = market.accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
+        let mut accounts = account::Accounts::default();
+        let account_id = accounts.create_new_account(NotNan::new(1e5).unwrap(), 0);
 
         let mut order_book = OrderBook::default();
 
@@ -307,8 +356,9 @@ mod tests {
             timestamp: NotNan::new(1703713624.0).unwrap(),
             quantity: 10,
             side: Side::Ask,
-            account_id: account_id, 
+            account_id: account_id,
             id: Uuid::new_v4(),
+            status: Status::Created,
         };
         let ask2 = OrderBase {
             limit: NotNan::new(30.).unwrap(),
@@ -317,6 +367,7 @@ mod tests {
             side: Side::Ask,
             account_id: account_id,
             id: Uuid::new_v4(),
+            status: Status::Created,
         };
         let ask3 = OrderBase {
             limit: NotNan::new(15.).unwrap(),
@@ -325,6 +376,7 @@ mod tests {
             side: Side::Ask,
             account_id: account_id,
             id: Uuid::new_v4(),
+            status: Status::Created,
         };
         let ask4 = OrderBase {
             limit: NotNan::new(20.).unwrap(),
@@ -333,6 +385,7 @@ mod tests {
             side: Side::Ask,
             account_id: account_id,
             id: Uuid::new_v4(),
+            status: Status::Created,
         };
 
         let (ask1_id, ask2_id, ask3_id, ask4_id) = (ask1.id, ask2.id, ask3.id, ask4.id);

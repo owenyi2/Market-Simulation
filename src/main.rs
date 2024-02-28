@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::process;
+use std::sync::Arc;
 use std::thread;
 use std::time;
 
@@ -14,9 +14,6 @@ fn main() {
         .enable_all()
         .build()
         .unwrap();
-        
-    api_runtime.block_on(
-        app::app_main()
-    )
-}
 
+    api_runtime.block_on(app::app_main())
+}

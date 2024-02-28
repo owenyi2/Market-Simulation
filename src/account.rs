@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use ordered_float::NotNan;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use serde::{Serialize, Deserialize};
 
-use super::order::Side; 
+use super::order::Side;
 
 #[derive(Debug, Eq, Hash, PartialEq, Copy, Clone)]
 pub struct AccountId {
@@ -44,21 +44,21 @@ impl Account {
         AccountView {
             id: self.id.to_string(),
             account_balance: self.account_balance.into_inner(),
-            position: self.position
+            position: self.position,
         }
     }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct AccountView {
-    id: String,
-    account_balance: f64,
-    position: i32
+    pub id: String,
+    pub account_balance: f64,
+    pub position: i32,
 }
 
 #[derive(Debug, Default)]
 pub struct Accounts {
-    accounts: HashMap<Uuid, Account>
+    accounts: HashMap<Uuid, Account>,
 }
 
 impl Accounts {
@@ -71,7 +71,7 @@ impl Accounts {
     }
     pub fn check_uuid(&self, uuid: Uuid) -> Option<AccountId> {
         let Some(account) = self.accounts.get(&uuid) else {
-            return None
+            return None;
         };
         Some(AccountId::new(&account))
     }
@@ -84,10 +84,17 @@ impl Accounts {
         // Although later on we may want to implement Account deletion. Which would screw up the above expect
         // In that case, we will need to make AccountId no longer Copy and Clone
         // And we need to implement a complicated destructor that checks there are no existing orders related to the account
-           // realisation: the /account DELETE route can refuse unless the client has deleted all existing orders. So it pushes some of the responsiblity on the client
+        // realisation: the /account DELETE route can refuse unless the client has deleted all existing orders. So it pushes some of the responsiblity on the client
         // The destructor needs to also delete any AccountId associated. Wow this is complicated
     }
-    pub fn handle_transaction(&mut self, aggressor_id: AccountId, counterparty_id: AccountId, side: Side, limit: f64, quantity: usize) {
+    pub fn handle_transaction(
+        &mut self,
+        aggressor_id: AccountId,
+        counterparty_id: AccountId,
+        side: Side,
+        limit: f64,
+        quantity: usize,
+    ) {
         let aggressor = &mut self.accounts.get_mut(&aggressor_id.as_uuid()).unwrap();
         aggressor.position += (quantity as i32) * (side as i32);
         aggressor.account_balance -= (quantity as f64) * limit * (side as i32) as f64;
@@ -95,7 +102,7 @@ impl Accounts {
         let counterparty = &mut self.accounts.get_mut(&counterparty_id.as_uuid()).unwrap();
         counterparty.position -= (quantity as i32) * (side as i32);
         counterparty.account_balance += (quantity as f64) * limit * (side as i32) as f64;
-    } 
+    }
 }
 
 //SHOULD DO: implement Drop for Account to clean up any orders in the orderbook and refuse any orders tied to Account. Not important now, because we're not going to delete an Account.
