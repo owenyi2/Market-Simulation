@@ -64,27 +64,39 @@ pub async fn new_order(
         .check_account_uuid(account_id)
         .ok_or(AppError::AccountDoesNotExist)?;
 
-    //TODO: Implement market.validate_order()
     let order = order::OrderBase::build(
         order_req_body.limit,
         order_req_body.quantity,
         order_req_body.side,
         account_id,
     )
-    .map_err(|_| AppError::OrderBodyInvalid)?;
+    .map_err(|_| AppError::OrderBodyIncorrect)?;
+
+    market.validate_order(&order, account_id).map_err(|e| AppError::OrderInvalid(e))?;
 
     let order_view = order.view();
     market.handle_incoming_order(order);
 
     Ok(Json(order_view).into_response())
 }
+
 pub async fn delete_order_by_id(
     headers: HeaderMap,
+    State(market): State<MarketStateHandle>,
     Path(order_id): Path<String>,
-) -> impl IntoResponse {
-    let Some(account_id) = headers.get("account-id") else {
-        return (StatusCode::BAD_REQUEST, "`account-id` missing in header").into_response();
-    };
-    println!("{:?}", account_id);
-    "delete_order_by_id".into_response()
+) -> Result<Response, AppError> {
+    let order_id = Uuid::try_parse(&order_id).map_err(|_| AppError::OrderIdInvalid)?;
+
+    let account_id = parse_account_id_from_header(headers)?;
+
+    let mut market = market.lock().await;
+    let account_id = market
+        .check_account_uuid(account_id)
+        .ok_or(AppError::AccountDoesNotExist)?;
+
+    market
+        .delete_order_by_id(order_id)
+        .ok_or(AppError::OrderCannotBeCancelled)?;
+
+    Ok("".into_response())
 }

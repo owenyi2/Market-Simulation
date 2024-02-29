@@ -4,7 +4,7 @@ use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::order::Side;
+use super::order::{OrderBase, Side};
 
 #[derive(Debug, Eq, Hash, PartialEq, Copy, Clone)]
 pub struct AccountId {
@@ -62,6 +62,32 @@ pub struct Accounts {
 }
 
 impl Accounts {
+    pub fn check_sufficient_balance(
+        &self,
+        account_id: AccountId,
+        order: &OrderBase
+    ) -> bool {
+        let account = self.get(&account_id);
+        match order.side {
+            Side::Bid => {
+                let requirement = order.limit * order.quantity as f64;
+                if account.account_balance < requirement {
+                    return false;
+                }
+            }
+            Side::Ask => {
+                let difference = account.position - order.quantity as i32;
+                if difference < 0 {
+                    let requirement = order.limit * difference as f64 * 0.5;
+                    
+                    if account.account_balance < requirement {
+                        return false;
+                    }
+                } 
+            }
+        }
+        true
+    }
     pub fn create_new_account(&mut self, account_balance: NotNan<f64>, position: i32) -> AccountId {
         let account = Account::new(account_balance, position);
         let accountId = AccountId::new(&account);

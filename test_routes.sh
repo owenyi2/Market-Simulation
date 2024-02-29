@@ -28,15 +28,29 @@ curl \
     "http://localhost:3000/api/account" && echo
 
 echo "[POST] /api/order/new"
-curl \
+ORDER_1_0=$(curl -s \
     -H 'Content-Type: application/json' \
     -H "account-id: ${ACCOUNT_ID_1}" \
     -d '{ "limit": 12.01, "quantity": 10, "side": "Bid" }' \
     -X POST \
-    "http://localhost:3000/api/order/new" && echo
+    "http://localhost:3000/api/order/new")
+
+echo $ORDER_1_0
 
 echo "[POST] /api/order/new"
-ORDER_2_0=$(curl \
+# This request intentionally fails
+curl \
+    -H 'Content-Type: application/json' \
+    -H "account-id: ${ACCOUNT_ID_1}" \
+    -d '{ "limit": 11.99, "quantity": 10, "side": "Ask" }' \
+    -X POST \
+    "http://localhost:3000/api/order/new" && echo
+
+
+ORDER_1_0=$(echo $ORDER_1_0 | grep -Eo '"id":".*?"' | grep -o '[a-z0-9\-]*' | tail -n1) 
+
+echo "[POST] /api/order/new"
+ORDER_2_0=$(curl -s \
     -H 'Content-Type: application/json' \
     -H "account-id: ${ACCOUNT_ID_2}" \
     -d '{ "limit": 12.00, "quantity": 8, "side": "Ask" }' \
@@ -70,5 +84,17 @@ echo "[GET] /order/:id"
 curl \
     -H "account-id: ${ACCOUNT_ID_2}" \
     -X GET \
-    "http://localhost:3000/api/order/${ORDER_2_0}"
+    "http://localhost:3000/api/order/${ORDER_2_0}" && echo
 
+echo "[DELETE] /order/:id"
+curl \
+    -H "account-id: ${ACCOUNT_ID_1}" \
+    -X DELETE \
+    "http://localhost:3000/api/order/${ORDER_1_0}"
+
+echo "[DELETE] /order/:id"
+# This request intentionally fails
+curl \
+    -H "account-id: ${ACCOUNT_ID_2}" \
+    -X DELETE \
+    "http://localhost:3000/api/order/${ORDER_2_0}"

@@ -4,7 +4,7 @@ use ordered_float::NotNan;
 use uuid::Uuid;
 
 use crate::account::{Account, AccountId, Accounts};
-use crate::order::{OrderBase, OrderBook, ProcessedOrders, Status};
+use crate::order::{OrderBase, OrderBook, ProcessedOrders, Status, Side};
 
 #[derive(Debug, Default)]
 pub struct Market {
@@ -24,6 +24,40 @@ impl Market {
         };
         Ok(self.accounts.create_new_account(account_balance, position))
     }
+    pub fn validate_order(
+        &self,
+        order: &OrderBase,
+        account_id: AccountId,
+    ) -> Result<(), &'static str> {
+        const MAX_ORDERS: usize = 10;
+
+        let curr_orders = self.order_book.filter_order_by_account(account_id);
+        // sufficient account_balance
+        let notional = order.limit * order.quantity as f64;
+        if !self
+            .accounts
+            .check_sufficient_balance(account_id, &order)
+        {
+            return Err("Insufficient account balance");
+        }
+
+        let mut num_orders = 0;
+        // no wash trades
+        match order.side {
+            Side::Bid => if curr_orders.inspect(|_| num_orders+=1).filter(|order| order.side == Side::Ask).filter(|o| o.limit <= order.limit).peekable().peek().is_some() {
+                return Err("Wash trades are not allowed")
+            }
+            Side::Ask => if curr_orders.inspect(|_| num_orders+=1).filter(|order| order.side == Side::Bid).filter(|o| o.limit >= order.limit).peekable().peek().is_some() {
+                return Err("Wash trades are not allowed")
+            }
+        }
+
+        // cap on outstanding orders
+        if num_orders >= MAX_ORDERS {
+            return Err("Exceeds maximum number of outstanding orders allowed");
+        }
+        Ok(())
+    }
     pub fn get_order_by_id(&self, order_id: Uuid) -> Option<&OrderBase> {
         if let Some(order) = self.processed_orders.find_order(order_id) {
             return Some(order);
@@ -32,6 +66,12 @@ impl Market {
             return Some(order);
         }
         return None;
+    }
+    pub fn delete_order_by_id(&mut self, order_id: Uuid) -> Option<()> {
+        let mut order = self.order_book.delete_order(order_id)?;
+        order.status = Status::Cancelled;
+        self.processed_orders.push(order);
+        Some(())
     }
     pub fn get_orders_by_account(&self, account_id: AccountId) -> impl Iterator<Item = &OrderBase> {
         self.order_book
@@ -81,8 +121,6 @@ impl Market {
                 matched.status = Status::Executed;
                 self.processed_orders.push(matched);
             } else {
-                // possible refactor:
-                // have a self.handle_transaction which calls accounts.handle_transaction as one of the subtasks. I anticipate that more and more functionality will need to be implemented to properly facilitate a transaction e.g. updating the existing orders tracked by accounts. We may also want to make this async in which case, we would want to delegate processing into an await block. This function should only determine if a transaction can be made
                 matched.quantity -= transaction_quantity;
                 self.order_book.insert_order(matched);
             }
