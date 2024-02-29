@@ -1,8 +1,8 @@
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::error::Error;
 use std::ops::Neg;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::collections::VecDeque;
 
 use keyed_priority_queue::KeyedPriorityQueue;
 use ordered_float::NotNan;
@@ -62,40 +62,41 @@ impl OrderBook {
 
     pub fn find_order(&self, order_id: Uuid) -> Option<&OrderBase> {
         if let Some(ask_order) = self.asks.get_priority(&order_id) {
-    return Some(&ask_order.order);
-        } 
+            return Some(&ask_order.order);
+        }
         if let Some(bid_order) = self.bids.get_priority(&order_id) {
-        return Some(&bid_order.order);
+            return Some(&bid_order.order);
         }
         None
     }
-    pub fn filter_order_by_account(&self, account_id: AccountId)-> Vec<&OrderBase> {
+    pub fn filter_order_by_account(
+        &self,
+        account_id: AccountId,
+    ) -> impl Iterator<Item = &OrderBase> {
         self.bids
             .iter()
             .map(|x| &x.1.order)
-            .filter(|&x| x.account_id == account_id)
+            .filter(move |x| x.account_id == account_id)
             .chain(
-            self.asks
-                .iter()
-                .map(|x| &x.1.order)
-                .filter(|&x| x.account_id == account_id)
-                  )
-            .collect()
-
+                self.asks
+                    .iter()
+                    .map(|x| &x.1.order)
+                    .filter(move |x| x.account_id == account_id),
+            )
     }
 }
 
 #[derive(Debug)]
 pub struct ProcessedOrders {
     orders: VecDeque<OrderBase>,
-    capacity: usize
+    capacity: usize,
 }
 
-impl Default for ProcessedOrders { 
+impl Default for ProcessedOrders {
     fn default() -> ProcessedOrders {
         ProcessedOrders {
             orders: VecDeque::with_capacity(64),
-            capacity: 64
+            capacity: 64,
         }
     }
 }
@@ -108,17 +109,17 @@ impl ProcessedOrders {
         self.orders.push_back(order);
     }
     pub fn find_order(&self, order_id: Uuid) -> Option<&OrderBase> {
+        self.orders.iter().find(|&x| x.id == order_id)
+    }
+    pub fn filter_order_by_account(
+        &self,
+        account_id: AccountId,
+    ) -> impl Iterator<Item = &OrderBase> {
         self.orders
             .iter()
-            .find(|&x| x.id == order_id)
+            .filter(move |&x| x.account_id == account_id)
     }
-    pub fn filter_order_by_account(&self, account_id: AccountId)-> Vec<&OrderBase> {
-        self.orders
-            .iter()
-            .filter(|&x| x.account_id == account_id)
-            .collect()
-    }
-} 
+}
 
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum Side {
@@ -153,7 +154,7 @@ pub struct OrderBase {
     pub side: Side,
     pub account_id: AccountId,
     id: Uuid,
-    pub status: Status
+    pub status: Status,
 }
 
 // Make this a builder instead of a new
@@ -186,7 +187,7 @@ impl OrderBase {
             side: self.side,
             account_id: self.account_id.as_uuid().to_string(),
             id: self.id.to_string(),
-            status: self.status
+            status: self.status,
         }
     }
 }

@@ -48,7 +48,9 @@ pub enum AppError {
     AccountIdMissing,
     AccountIdInvalid,
     AccountDoesNotExist,
-    OrderInvalid,
+    OrderBodyInvalid,
+    OrderIdInvalid,
+    OrderDoesNotExist,
 }
 
 impl IntoResponse for AppError {
@@ -61,9 +63,14 @@ impl IntoResponse for AppError {
             AppError::AccountDoesNotExist => {
                 (StatusCode::FORBIDDEN, "this `account-id` does not exist")
             }
-            AppError::OrderInvalid => {
-                (StatusCode::BAD_REQUEST, "submitted order Bodyis invalid")
+            AppError::OrderBodyInvalid => {
+                (StatusCode::BAD_REQUEST, "submitted order Body is invalid")
             }
+            AppError::OrderIdInvalid => (StatusCode::NOT_FOUND, "the order `id` is invalid"),
+            AppError::OrderDoesNotExist => (
+                StatusCode::NOT_FOUND,
+                "this order `id` does not exist or no longer exists",
+            ),
         };
         return (status, message).into_response();
     }

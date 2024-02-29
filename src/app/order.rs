@@ -5,9 +5,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-use market_simulation::order;
 use super::{parse_account_id_from_header, AppError, MarketStateHandle};
+use market_simulation::order;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct OrderReqBody {
@@ -18,22 +19,38 @@ pub struct OrderReqBody {
 
 pub async fn get_order_by_id(
     headers: HeaderMap,
+    State(market): State<MarketStateHandle>,
     Path(order_id): Path<String>,
-) -> impl IntoResponse {
-    let Some(account_id) = headers.get("account-id") else {
-        return (StatusCode::BAD_REQUEST, "`account-id` missing in header").into_response();
-    }; // This should be middleware. Consider refactoring later. I think using route_layer
-    println!("{:?}", account_id);
+) -> Result<Response, AppError> {
+    let order_id = Uuid::try_parse(&order_id).map_err(|_| AppError::OrderIdInvalid)?;
 
-    "get_order_by_id".into_response()
+    let account_id = parse_account_id_from_header(headers)?;
+
+    let mut market = market.lock().await;
+    let account_id = market
+        .check_account_uuid(account_id)
+        .ok_or(AppError::AccountDoesNotExist)?;
+
+    let order = market
+        .get_order_by_id(order_id)
+        .ok_or(AppError::OrderDoesNotExist)?;
+
+    Ok(Json(order.view()).into_response())
 }
-pub async fn get_all_orders(headers: HeaderMap) -> impl IntoResponse {
-    let Some(account_id) = headers.get("account-id") else {
-        return (StatusCode::BAD_REQUEST, "`account-id` missing in header").into_response();
-    };
-    println!("{:?}", account_id);
+pub async fn get_all_orders(
+    headers: HeaderMap,
+    State(market): State<MarketStateHandle>,
+) -> Result<Response, AppError> {
+    let account_id = parse_account_id_from_header(headers)?;
 
-    "get_all_orders".into_response()
+    let mut market = market.lock().await;
+    let account_id = market
+        .check_account_uuid(account_id)
+        .ok_or(AppError::AccountDoesNotExist)?;
+
+    let orders = market.get_orders_by_account(account_id);
+
+    Ok(Json(orders.map(|order| order.view()).collect::<Vec<_>>()).into_response())
 }
 pub async fn new_order(
     headers: HeaderMap,
@@ -44,17 +61,22 @@ pub async fn new_order(
 
     let mut market = market.lock().await;
     let account_id = market
-        .check_uuid(account_id)
+        .check_account_uuid(account_id)
         .ok_or(AppError::AccountDoesNotExist)?;
 
     //TODO: Implement market.validate_order()
-    let order = order::OrderBase::build(order_req_body.limit, order_req_body.quantity, order_req_body.side, account_id)
-        .map_err(|_| AppError::OrderInvalid)?;
+    let order = order::OrderBase::build(
+        order_req_body.limit,
+        order_req_body.quantity,
+        order_req_body.side,
+        account_id,
+    )
+    .map_err(|_| AppError::OrderBodyInvalid)?;
 
     let order_view = order.view();
-    market.handle_incoming_order(order); 
+    market.handle_incoming_order(order);
 
-    Ok(Json(order_view).into_response()) 
+    Ok(Json(order_view).into_response())
 }
 pub async fn delete_order_by_id(
     headers: HeaderMap,

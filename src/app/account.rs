@@ -45,7 +45,7 @@ pub async fn get_account(
 
     let market = market.lock().await;
     let account_id = market
-        .check_uuid(account_id)
+        .check_account_uuid(account_id)
         .ok_or(AppError::AccountDoesNotExist)?;
 
     let account = market.get_account(&account_id);
