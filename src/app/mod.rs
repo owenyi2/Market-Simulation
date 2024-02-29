@@ -74,8 +74,8 @@ fn parse_account_id_from_header(headers: HeaderMap) -> Result<Uuid, AppError> {
         .get("account-id")
         .ok_or(AppError::AccountIdMissing)?
         .to_str()
-        .map_err(|e| AppError::AccountIdInvalid)?;
-    let account_id = Uuid::try_parse(account_id).map_err(|e| AppError::AccountIdInvalid)?;
+        .map_err(|_| AppError::AccountIdInvalid)?;
+    let account_id = Uuid::try_parse(account_id).map_err(|_| AppError::AccountIdInvalid)?;
 
     Ok(account_id)
 }

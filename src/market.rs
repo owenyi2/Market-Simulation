@@ -4,12 +4,13 @@ use ordered_float::NotNan;
 use uuid::Uuid;
 
 use crate::account::{Account, AccountId, Accounts};
-use crate::order::{OrderBase, OrderBook, Status};
+use crate::order::{OrderBase, OrderBook, ProcessedOrders, Status};
 
 #[derive(Debug, Default)]
 pub struct Market {
     order_book: OrderBook,
     accounts: Accounts,
+    processed_orders: ProcessedOrders
 }
 
 impl Market {
@@ -48,21 +49,7 @@ impl Market {
             let aggressor_id = order.account_id;
             let counterparty_id = matched.account_id;
             let transaction_quantity = min(order.quantity, matched.quantity);
-
-            if matched.quantity == transaction_quantity {
-            } else {
-                // possible refactor:
-                // have a self.handle_transaction which calls accounts.handle_transaction as one of the subtasks. I anticipate that more and more functionality will need to be implemented to properly facilitate a transaction e.g. updating the existing orders tracked by accounts. We may also want to make this async in which case, we would want to delegate processing into an await block. This function should only determine if a transaction can be made
-                matched.quantity -= transaction_quantity;
-                self.order_book.insert_order(matched);
-            }
-            if order.quantity == transaction_quantity {
-                break None;
-            } else {
-                order.quantity -= transaction_quantity;
-            }
-
-
+            
             self.accounts.handle_transaction(
                 aggressor_id,
                 counterparty_id,
@@ -71,6 +58,22 @@ impl Market {
                 transaction_quantity,
             );
 
+            if matched.quantity == transaction_quantity {
+                matched.status = Status::Executed;
+                self.processed_orders.push(matched);
+            } else {
+                // possible refactor:
+                // have a self.handle_transaction which calls accounts.handle_transaction as one of the subtasks. I anticipate that more and more functionality will need to be implemented to properly facilitate a transaction e.g. updating the existing orders tracked by accounts. We may also want to make this async in which case, we would want to delegate processing into an await block. This function should only determine if a transaction can be made
+                matched.quantity -= transaction_quantity;
+                self.order_book.insert_order(matched);
+            }
+            if order.quantity == transaction_quantity {
+                order.status = Status::Executed;
+                self.processed_orders.push(order);
+                break None;
+            } else {
+                order.quantity -= transaction_quantity;
+            }
         };
         if let Some(order) = order {
             self.order_book.insert_order(order);

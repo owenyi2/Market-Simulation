@@ -59,6 +59,30 @@ impl OrderBook {
         }
         None
     }
+
+    pub fn find_order(&self, order_id: Uuid) -> Option<&OrderBase> {
+        if let Some(ask_order) = self.asks.get_priority(&order_id) {
+    return Some(&ask_order.order);
+        } 
+        if let Some(bid_order) = self.bids.get_priority(&order_id) {
+        return Some(&bid_order.order);
+        }
+        None
+    }
+    pub fn filter_order_by_account(&self, account_id: AccountId)-> Vec<&OrderBase> {
+        self.bids
+            .iter()
+            .map(|x| &x.1.order)
+            .filter(|&x| x.account_id == account_id)
+            .chain(
+            self.asks
+                .iter()
+                .map(|x| &x.1.order)
+                .filter(|&x| x.account_id == account_id)
+                  )
+            .collect()
+
+    }
 }
 
 #[derive(Debug)]
@@ -67,18 +91,32 @@ pub struct ProcessedOrders {
     capacity: usize
 }
 
-impl ProcessedOrders {
-    pub fn new() -> ProcessedOrders {
+impl Default for ProcessedOrders { 
+    fn default() -> ProcessedOrders {
         ProcessedOrders {
             orders: VecDeque::with_capacity(64),
             capacity: 64
         }
     }
+}
+
+impl ProcessedOrders {
     pub fn push(&mut self, order: OrderBase) {
         if self.orders.len() >= self.capacity {
             self.orders.pop_front();
         }
         self.orders.push_back(order);
+    }
+    pub fn find_order(&self, order_id: Uuid) -> Option<&OrderBase> {
+        self.orders
+            .iter()
+            .find(|&x| x.id == order_id)
+    }
+    pub fn filter_order_by_account(&self, account_id: AccountId)-> Vec<&OrderBase> {
+        self.orders
+            .iter()
+            .filter(|&x| x.account_id == account_id)
+            .collect()
     }
 } 
 

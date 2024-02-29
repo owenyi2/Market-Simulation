@@ -49,7 +49,7 @@ pub async fn new_order(
 
     //TODO: Implement market.validate_order()
     let order = order::OrderBase::build(order_req_body.limit, order_req_body.quantity, order_req_body.side, account_id)
-        .map_err(|e| AppError::OrderInvalid)?;
+        .map_err(|_| AppError::OrderInvalid)?;
 
     let order_view = order.view();
     market.handle_incoming_order(order); 
