@@ -34,6 +34,8 @@ pub async fn app_main() {
         )
         .route("/api/order/new", post(order::new_order))
         .route("/api/order", get(order::get_all_orders))
+        .route("/api/market/bars", get(market::bars))
+        .route("/api/market/quote", get(market::quote))
         .with_state(market)
         .fallback(fallback);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();

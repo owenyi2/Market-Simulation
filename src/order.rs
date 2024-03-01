@@ -26,8 +26,6 @@ impl OrderBook {
             Side::Bid => Some(&self.bids.peek()?.1.order),
         }
     }
-    // this is a bit counterintuitive of an API, we should do pop_best and get_best with side
-    // if the called wants the opposite they should use -side because we impl Neg already
     pub fn pop(&mut self, side: Side) -> Option<OrderBase> {
         match side {
             Side::Ask => Some(self.asks.pop()?.1.order),

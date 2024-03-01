@@ -89,6 +89,9 @@ impl Market {
     pub fn get_account(&self, account_id: &AccountId) -> &Account {
         self.accounts.get(&account_id)
     }
+    pub fn quote(&self) -> (Option<&OrderBase>, Option<&OrderBase>) { 
+        (self.order_book.peek(Side::Ask), self.order_book.peek(Side::Bid))
+    }
     pub fn handle_incoming_order(&mut self, mut order: OrderBase) {
         let side = order.side;
         order.status = Status::Pending;

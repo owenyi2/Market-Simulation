@@ -97,4 +97,29 @@ echo "[DELETE] /order/:id"
 curl \
     -H "account-id: ${ACCOUNT_ID_2}" \
     -X DELETE \
-    "http://localhost:3000/api/order/${ORDER_2_0}"
+    "http://localhost:3000/api/order/${ORDER_2_0}" && echo
+
+echo "[POST] /api/order/new"
+ORDER_1_1=$(curl -s \
+    -H 'Content-Type: application/json' \
+    -H "account-id: ${ACCOUNT_ID_1}" \
+    -d '{ "limit": 11.81, "quantity": 10, "side": "Bid" }' \
+    -X POST \
+    "http://localhost:3000/api/order/new")
+
+echo $ORDER_1_1
+
+echo "[POST] /api/order/new"
+ORDER_1_2=$(curl -s \
+    -H 'Content-Type: application/json' \
+    -H "account-id: ${ACCOUNT_ID_1}" \
+    -d '{ "limit": 12.31, "quantity": 10, "side": "Ask" }' \
+    -X POST \
+    "http://localhost:3000/api/order/new")
+
+echo $ORDER_1_2
+
+echo "[GET] /market/quote"
+curl \
+    -X GET \
+    "http://localhost:3000/api/market/quote"
