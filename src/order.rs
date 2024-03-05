@@ -180,7 +180,7 @@ impl OrderBase {
     pub fn view(&self) -> OrderView {
         OrderView {
             limit: self.limit.into_inner(),
-            timestamp: self.limit.into_inner(),
+            timestamp: self.timestamp.into_inner(),
             quantity: self.quantity,
             side: self.side,
             account_id: self.account_id.as_uuid().to_string(),

@@ -1,4 +1,5 @@
 use std::cmp::min;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ordered_float::NotNan;
 use uuid::Uuid;
@@ -111,7 +112,7 @@ impl Market {
             let aggressor_id = order.account_id;
             let counterparty_id = matched.account_id;
             let transaction_quantity = min(order.quantity, matched.quantity);
-
+            println!("price: {:?} @ time: {:?}", order.limit.into_inner(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64());
             self.accounts.handle_transaction(
                 aggressor_id,
                 counterparty_id,
