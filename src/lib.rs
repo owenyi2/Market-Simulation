@@ -1,3 +1,564 @@
-pub mod account;
-pub mod market;
-pub mod order;
+use std::collections::HashMap;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+use std::time::{self, SystemTime, UNIX_EPOCH, Duration};
+use std::cmp::{Ordering, min};
+use std::ops::Neg;
+
+use crossbeam;
+use rand::Rng;
+use uuid::Uuid;
+use ordered_float::NotNan;
+
+#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
+pub enum Side {
+    Ask = -1,
+    Bid = 1,
+}
+
+impl Neg for Side {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        match self {
+            Side::Ask => Side::Bid,
+            Side::Bid => Side::Ask,
+        }
+    }
+}
+// Agent sends order to Market
+// Market acts on Account and send updates on channels
+// Market never waits on agents except for orders
+// The Agent listens on channels
+
+#[derive(Debug)]
+pub struct Account {
+    account_sender: mpsc::Sender<AccountInfo>,
+    market_info_sender: crossbeam::channel::Sender<String>,
+    solvent: bool, 
+    account_info: AccountInfo,
+}
+
+impl Account {
+    fn notify(&mut self) {
+        self.account_sender.send(self.account_info);
+    }
+}
+
+pub struct Market {
+    order_book: OrderBook,
+    order_channel: (mpsc::Sender<MakeOrder>, mpsc::Receiver<MakeOrder>),
+    market_info_channel: (
+        crossbeam::channel::Sender<String>,
+        crossbeam::channel::Receiver<String>,
+    ),
+    accounts: HashMap<Uuid, Account>,
+}
+impl Market {
+    pub fn new() -> Market {
+        Market {
+            order_book: OrderBook::default(),
+            order_channel: mpsc::channel(),
+            market_info_channel: crossbeam::channel::unbounded(),
+            accounts: HashMap::new(),
+        }
+    }
+    pub fn create_account(
+        &mut self,
+        init: AccountInfo,
+    ) -> (
+        mpsc::Sender<MakeOrder>,
+        crossbeam::channel::Receiver<String>,
+        mpsc::Receiver<AccountInfo>,
+    ) {
+        let (account_sender, account_receiver) = mpsc::channel();
+        let account = Account {
+            account_sender,
+            market_info_sender: self.market_info_channel.0.clone(),
+            solvent: true,
+            account_info: init 
+        };
+        self.accounts.insert(init.id, account);
+        (
+            self.order_channel.0.clone(),
+            self.market_info_channel.1.clone(),
+            account_receiver,
+        )
+    }
+    pub fn run(&mut self) { 
+        loop {
+            let received = self.order_channel.1.recv().unwrap();
+            match received {
+                MakeOrder::Submit(order) => self.handle_order(order),
+                MakeOrder::Cancel(order) => self.cancel_order(order)
+            }
+        }
+    }
+
+    fn handle_order(&mut self, order: SubmitOrder) {
+        match self.validate_order(order) {
+            Ok(order) => self.record_order(order),
+            Err(_) => return ()
+        };
+
+        // println!("BEFORE CLEARING");
+        // println!("{:#?}", &self.order_book);
+        // println!("===");
+        self.do_clearing();
+        println!("AFTER CLEARING");
+        println!("{:#?}", &self.order_book);
+        println!("{:#?}", &self.accounts);
+        println!("===")
+    }
+    fn do_clearing(&mut self) {
+        loop {
+            let Some(best_ask) = self.order_book.peek(Side::Ask) else {
+                break
+            };
+            let Some(best_bid) = self.order_book.peek(Side::Bid) else {
+                break
+            };
+
+            if best_ask.limit.is_none() || best_bid.limit.is_none() {
+                 // If only one is a market order, price is the best limit
+                 // If both are market, then look for the best limit price on each side. The older one gets the best fill. If both are same age, then they fill at the midpoint. If there are no best limit prices, then no transaction 
+            } else {
+                if best_ask.limit > best_bid.limit {
+                    break
+                }
+
+                let qty = min(best_ask.quantity, best_bid.quantity);
+                let price = match best_ask.timestamp.cmp(&best_bid.timestamp) {
+                    Ordering::Less => best_bid.limit.unwrap(),
+                    Ordering::Equal => (best_ask.limit.unwrap() + best_bid.limit.unwrap()) / 2.,
+                    Ordering::Greater => best_ask.limit.unwrap() 
+                    // the older order gets the better fill
+                }; 
+                
+                let Some(buyer) = self.accounts.get(&best_bid.account_id) else {
+                    self.order_book.pop(Side::Bid);
+                    break
+                };
+                let Some(seller) = self.accounts.get(&best_ask.account_id) else {
+                    self.order_book.pop(Side::Ask); 
+                    break
+                };
+                
+                if let Some(buyer) = self.accounts.get_mut(&best_bid.account_id) { 
+                    buyer.account_info.stocks += qty as i32;
+                    buyer.account_info.cash -= f64::from(price) * qty as f64;
+                    buyer.notify();
+                }
+                
+                if let Some(seller) = self.accounts.get_mut(&best_ask.account_id) { 
+                    seller.account_info.stocks -= qty as i32;
+                    seller.account_info.cash += f64::from(price) * qty as f64;
+                    seller.notify();
+                }
+
+                self.order_book.consume(&qty);
+            }
+        } 
+        self.market_info_channel.0.send(
+            format!("{:?} | {:?}", self.order_book.peek(Side::Ask), self.order_book.peek(Side::Bid))
+        ).unwrap(); 
+    }
+
+    fn record_order(&mut self, order: Order) { 
+        self.order_book.insert(order);
+        // println!("{:#?}", self.order_book);
+    }
+
+    fn validate_order(&self, order: SubmitOrder) -> Result<Order, ()> {
+        let order = Order::build(order).map_err(|_| ())?;
+        // if self.order_book.is_wash(order) {
+        //     return Err(())
+        // }
+        Ok(order)
+    }
+    fn cancel_order(&mut self, order: CancelOrder) {
+        self.order_book.cancel(order.order_id);
+    }
+}
+
+pub enum MakeOrder {
+    Submit(SubmitOrder),
+    Cancel(CancelOrder),
+}
+
+pub struct SubmitOrder {
+    pub limit: Option<f64>, // if limit is None, order is treated as a market order
+    pub quantity: usize,
+    pub side: Side,
+    pub account_id: Uuid, // really should use a constructor or builder rather than making these public
+}
+pub struct CancelOrder {
+    order_id: Uuid,
+}
+
+#[derive(Debug)]
+struct Order {
+    limit: Option<NotNan<f64>>,
+    quantity: usize,
+    side: Side,
+    account_id: Uuid,
+    timestamp: NotNan<f64>,
+    id: Uuid
+}
+
+impl Order {
+    fn build(order: SubmitOrder) -> Result<Order, &'static str>{
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| "Error in generating timestamp")?.as_secs_f64();
+        Ok(Order {
+            limit: order.limit.map(|limit| NotNan::new(limit)).transpose().map_err(|_| "Limit must be not Nan")?,
+            timestamp: NotNan::new(timestamp).map_err(|_| "Error in generating timestamp")?,
+            quantity: order.quantity,
+            side: order.side,
+            account_id: order.account_id,
+            id: Uuid::new_v4(),
+        })
+    }
+}
+
+#[derive(Default, Debug)]
+struct OrderBook {
+    bids: Vec<BidOrder>,
+    asks: Vec<AskOrder>
+}
+
+impl OrderBook {
+    fn insert(&mut self, order: Order) {
+        match order.side {
+            Side::Bid => {
+                self.bids.push(BidOrder{order});
+                self.bids.sort();
+            }
+            Side::Ask => {
+                self.asks.push(AskOrder{order});
+                self.asks.sort();
+            }
+        } 
+    }
+    fn is_empty(&self, side: Side) -> bool {
+        match side {
+            Side::Bid => {
+                self.bids.is_empty()
+            }
+            Side::Ask => {
+                self.asks.is_empty()
+            }
+        }
+    }
+
+    // fn is_wash(&self, order: Order) -> bool {
+    //     match order.side {
+    //         Side::Bid => {
+    //             if let Some(best_ask) = self.asks.iter().filter(|o| o.account_id == order.account_id).rev().next() {
+    //                 if best_ask.limit.is_none() {
+    //                     return false // TODO: how to handle validating market orders against wash trades. It's simple actually. J=
+    // // We can only submit market orders if we don't have any opposing limit orders and we can only submit limit orders if we don't have any opposing market orders. On top of the other rule that we can only submit limit orders if we don't have any are no opposing orders 
+    //                 }
+    //                 if order.limit
+    //             }
+    //         }
+    //     } 
+    // }
+    fn peek(&self, side: Side) -> Option<&Order> {
+        match side {
+            Side::Bid => Some(&self.bids.last()?.order),
+            Side::Ask => Some(&self.asks.last()?.order)
+        } 
+    }
+    
+    fn pop(&mut self, side: Side) -> Option<Order> {
+        match side {
+            Side::Bid => Some(self.bids.pop()?.order),
+            Side::Ask => Some(self.asks.pop()?.order)
+        }
+    }
+
+    fn consume(&mut self, quantity: &usize) {
+        self.bids.last_mut().unwrap().order.quantity -= quantity;
+        if self.bids.last().unwrap().order.quantity == 0 {
+            self.bids.pop();
+        } 
+        self.asks.last_mut().unwrap().order.quantity -= quantity;
+        if self.asks.last().unwrap().order.quantity == 0 {
+            self.asks.pop();
+        }
+    }
+
+    fn cancel(&mut self, order_id: Uuid) -> Option<Order>{
+        let mut order = None;
+        if let Some(index) = self.bids.iter().position(|o| o.order.id == order_id) {
+            order = Some(self.bids.remove(index).order);
+        }
+        if let Some(index) = self.asks.iter().position(|o| o.order.id == order_id) {
+            order = Some(self.asks.remove(index).order);
+        }
+        order 
+    }
+}
+
+#[derive(Debug)]
+struct AskOrder {
+    order: Order,
+}
+
+impl Ord for AskOrder {
+    fn cmp(&self, other: &Self) -> Ordering {
+        if self.order.limit.is_none() && other.order.limit.is_none() {
+            return other.order.timestamp.cmp(&self.order.timestamp); 
+        }
+        else {
+            if self.order.limit.is_none() {
+                return Ordering::Greater;
+            }
+            if other.order.limit.is_none() {
+                return Ordering::Less;
+            }
+        }
+        if self.order.limit == other.order.limit {
+            return other.order.timestamp.cmp(&self.order.timestamp);
+        }
+        other.order.limit.cmp(&self.order.limit)
+    }
+}
+
+impl PartialOrd for AskOrder {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for AskOrder {
+    fn eq(&self, other: &Self) -> bool {
+        (self.order.limit == other.order.limit) && (self.order.timestamp == other.order.timestamp)
+    }
+}
+
+impl Eq for AskOrder {}
+
+#[derive(Debug)]
+struct BidOrder {
+    order: Order,
+}
+
+impl Ord for BidOrder {
+    fn cmp(&self, other: &Self) -> Ordering {
+        if self.order.limit.is_none() && other.order.limit.is_none() {
+            return other.order.timestamp.cmp(&self.order.timestamp); 
+        }
+        else {
+            if self.order.limit.is_none() {
+                return Ordering::Greater;
+            }
+            if other.order.limit.is_none() {
+                return Ordering::Less;
+            }
+        }
+        if self.order.limit == other.order.limit {
+            return other.order.timestamp.cmp(&self.order.timestamp);
+        }
+        self.order.limit.cmp(&other.order.limit) 
+    }
+}
+
+impl PartialOrd for BidOrder {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for BidOrder {
+    fn eq(&self, other: &Self) -> bool {
+        (self.order.limit == other.order.limit) && (self.order.timestamp == other.order.timestamp)
+    }
+}
+
+impl Eq for BidOrder {}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AccountInfo {
+    pub cash: f64,
+    pub stocks: i32,
+    pub id: Uuid,
+}
+
+pub struct Agent {
+    account_receiver: mpsc::Receiver<AccountInfo>,
+    market_info_receiver: crossbeam::channel::Receiver<String>,
+    order_sender: mpsc::Sender<MakeOrder>,
+    pub account_info: AccountInfo,
+}
+impl Agent {
+    pub fn new(cash: f64, stocks: i32, market: &mut Market) -> Agent {
+        let init = AccountInfo {
+            cash,
+            stocks,
+            id: Uuid::new_v4(),
+        };
+        let (order_sender, market_info_receiver, account_receiver) = market.create_account(init);
+        Agent {
+            account_receiver,
+            market_info_receiver,
+            order_sender,
+            account_info: init,
+        }
+    }
+    pub fn run(&self, mut order_sequence: Vec<(SubmitOrder, u64)>) {
+        let mut i = 0;
+        loop {
+            let market_info = self.market_info_receiver.try_recv();
+
+            // println!("{:#?}", market_info);
+            if order_sequence.len() > 0 { 
+                let (order, delay) = order_sequence.pop().unwrap();
+
+                thread::sleep(Duration::from_millis(delay));
+
+                println!("{}, {}", self.account_info.id, i);
+                self.order_sender.send(MakeOrder::Submit(
+                    order
+                            ));
+                i += 1;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    // #[test]
+    fn simple_sequence() {
+    
+        let mut market = Market::new();
+        let agent1 = Agent::new(10000., 0, &mut market);
+        let agent2 = Agent::new(2000., 4, &mut market);
+
+        let agent1_handler = thread::spawn(move || {
+            let mut order_sequence = vec![
+                (SubmitOrder {
+                    limit: Some(20.), quantity: 10, side: Side::Ask, account_id: agent1.account_info.id,
+                }, 500),
+                (SubmitOrder {
+                    limit: Some(30.), quantity: 20, side: Side::Ask, account_id: agent1.account_info.id,
+                }, 500),
+                (SubmitOrder {
+                    limit: Some(15.), quantity: 1, side: Side::Ask, account_id: agent1.account_info.id,
+                }, 500),
+                (SubmitOrder {
+                    limit: Some(20.), quantity: 30, side: Side::Ask, account_id: agent1.account_info.id,
+                }, 500),
+                ];
+            order_sequence.reverse();
+            agent1.run(order_sequence);
+        });
+        let agent2_handler = thread::spawn(move || { 
+            println!("hello");
+            let order_sequence = vec![
+                (SubmitOrder {
+                    limit: Some(21.), quantity: 23, side: Side::Bid, account_id: agent2.account_info.id
+                }, 3000)
+            ];
+            agent2.run(order_sequence);
+        });
+
+        let market_handler = thread::spawn(move || {
+            market.run();
+        });
+
+        thread::spawn(|| {thread::sleep(Duration::from_millis(10000));}).join();
+         
+        println!("helloworld");
+
+        // Kinda janky run with `cargo test -- --nocapture`
+        // But I expect we will end up rewriting agents so much that this test shouldn't last for too long
+        // TODO: Make Agent a trait and in the test cases, move the current agent definition in as an impl of that trait. Then run this. Also remove the janky nocapture and have proper asserts
+    }
+
+    #[test]
+    fn more_complex_sequence() { 
+        let mut market = Market::new();
+        let alice = Agent::new(1e5, 0, &mut market);
+        let bob = Agent::new(1e5, 0, &mut market);
+        let charlie = Agent::new(1e5, 1000, &mut market);
+        let dan = Agent::new(1e5, 1000, &mut market);
+
+        println!("alice: {}", alice.account_info.id);
+        println!("bob: {}", bob.account_info.id);
+        println!("charlie: {}", charlie.account_info.id);
+        println!("dan: {}", dan.account_info.id);
+
+        let alice_handler = thread::spawn(move || {
+            let mut order_sequence = vec![
+                (SubmitOrder {
+                    limit: Some(60.01), quantity: 30, side: Side::Bid, account_id: alice.account_info.id,
+                }, 100),
+                (SubmitOrder {
+                    limit: Some(60.11), quantity: 12, side: Side::Ask, account_id: alice.account_info.id,
+                }, 100),
+                (SubmitOrder {
+                    limit: Some(60.02), quantity: 15, side: Side::Bid, account_id: alice.account_info.id,
+                }, 1500),
+                (SubmitOrder {
+                    limit: Some(60.08), quantity: 14, side: Side::Ask, account_id: alice.account_info.id,
+                }, 100),
+                (SubmitOrder {
+                    limit: Some(60.08), quantity: 8, side: Side::Ask, account_id: alice.account_info.id,
+                }, 2000)
+                ];
+            order_sequence.reverse();
+            alice.run(order_sequence);
+        });
+        let bob_handler = thread::spawn(move || { 
+            let mut order_sequence = vec![
+                (SubmitOrder {
+                    limit: Some(60.08), quantity: 100, side: Side::Bid, account_id: bob.account_info.id
+                }, 300),
+                (SubmitOrder {
+                    limit: Some(60.20), quantity: 10, side: Side::Ask, account_id: bob.account_info.id
+                }, 100),
+            ];
+            order_sequence.reverse();
+            
+            thread::sleep(Duration::from_millis(900));
+            bob.run(order_sequence);
+        });
+        let charlie_handler = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(2133));
+            let mut order_sequence = vec![
+                (SubmitOrder {
+                    limit: Some(60.01), quantity: 120, side: Side::Ask, account_id: charlie.account_info.id
+                }, 500)
+            ];
+            charlie.run(order_sequence);
+        });
+        let dan_handler = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(2266));
+            let mut order_sequence = vec![
+                (SubmitOrder {
+                    limit: Some(60.11), quantity: 20, side: Side::Bid, account_id: dan.account_info.id
+                }, 1000),
+                (SubmitOrder {
+                    limit: Some(60.3), quantity: 10, side: Side::Ask, account_id: dan.account_info.id
+                }, 100)
+            ];
+            order_sequence.reverse();
+            dan.run(order_sequence);
+            
+        });
+
+
+        let market_handler = thread::spawn(move || {
+            market.run();
+        });
+
+        thread::spawn(|| {thread::sleep(Duration::from_millis(10000));}).join();
+         
+        println!("helloworld");
+
+    }
+}
