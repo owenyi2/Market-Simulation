@@ -1,9 +1,22 @@
-// use market_simulation_reattempt::{Market, Agent, Side, MakeOrder, SubmitOrder, CancelOrder};
+use std::thread;
+
+use market_simulation_reattempt::{Market, Agent, Broker, Side, MakeOrder, SubmitOrder, CancelOrder};
 
 fn main() {
 //     let mut market = Market::new();
 //     let agent1 = Agent::new(10000., 0, &mut market);
 //     let agent2 = Agent::new(2000., 4, &mut market);
+    let mut market = Market::new();
+    let mut broker = Broker::build(20., 20., 0.01, 100., 100., &mut market).unwrap();
+
+    let broker_handler = thread::spawn(move || {
+        broker.run();
+    });
+
+    let market_handler = thread::spawn(move || {
+        market.run();
+    });
+
 // 
 //     let agent1_handler = thread::spawn(move || {
 //         let mut order_sequence = vec![
@@ -38,6 +51,6 @@ fn main() {
 //         market.run();
 //     });
 // 
-//     market_handler.join();
-//     println!("helloworld");
+    market_handler.join();
+    println!("helloworld");
 }

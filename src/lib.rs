@@ -4,9 +4,11 @@ use std::thread;
 use std::time::{self, SystemTime, UNIX_EPOCH, Duration};
 use std::cmp::{Ordering, min};
 use std::ops::Neg;
+use std::fmt::{self, Display};
 
 use crossbeam;
 use rand::Rng;
+use rand_distr::{Exp, LogNormal, Bernoulli, Normal, Distribution};
 use uuid::Uuid;
 use ordered_float::NotNan;
 
@@ -89,8 +91,21 @@ impl Market {
         loop {
             let received = self.order_channel.1.recv().unwrap();
             match received {
-                MakeOrder::Submit(order) => self.handle_order(order),
-                MakeOrder::Cancel(order) => self.cancel_order(order)
+                MakeOrder::Submit(order) => self.handle_order(order), 
+                MakeOrder::Cancel(order) => self.cancel_order(order),
+                MakeOrder::External(order) => { 
+                    if let Ok(order) = Order::build(order) {
+                        println!("INCOMING");
+                        println!("limit: {:.8?} \t quantity: {} \t id: {}", &order.limit.map(|l| f64::from(l)), &order.quantity, &order.account_id);
+
+                        self.record_order(order) 
+                    }
+                    self.do_clearing();
+                    println!("AFTER CLEARING");
+                    println!("{}", &self.order_book);
+                    println!("{:#?}", &self.accounts);
+                    println!("===")
+                }
             }
         }
     }
@@ -105,10 +120,10 @@ impl Market {
         // println!("{:#?}", &self.order_book);
         // println!("===");
         self.do_clearing();
-        println!("AFTER CLEARING");
-        println!("{:#?}", &self.order_book);
-        println!("{:#?}", &self.accounts);
-        println!("===")
+        // println!("AFTER CLEARING");
+        // println!("{:#?}", &self.order_book);
+        // println!("{:#?}", &self.accounts);
+        // println!("===")
     }
     fn do_clearing(&mut self) {
         loop {
@@ -185,6 +200,7 @@ impl Market {
 pub enum MakeOrder {
     Submit(SubmitOrder),
     Cancel(CancelOrder),
+    External(SubmitOrder)
 }
 
 pub struct SubmitOrder {
@@ -225,6 +241,21 @@ impl Order {
 struct OrderBook {
     bids: Vec<BidOrder>,
     asks: Vec<AskOrder>
+}
+
+impl Display for OrderBook {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut display = String::new(); 
+        display.push_str("BIDS\n");
+        for order in self.best(Side::Bid, 10).iter().rev() {
+            display.push_str(&format!("{:.8?} \t {} \t {} \n", order.limit.map(|l| f64::from(l)), order.quantity, order.account_id));
+        }
+        display.push_str("ASKS\n");
+        for order in self.best(Side::Ask, 10) {
+            display.push_str(&format!("{:.8?} \t {} \t {} \n", order.limit.map(|l| f64::from(l)), order.quantity, order.account_id));
+        }
+        write!(f, "{}", display)
+    }
 }
 
 impl OrderBook {
@@ -325,6 +356,13 @@ impl OrderBook {
             order = Some(self.asks.remove(index).order);
         }
         order 
+    }
+
+    fn best(&self, side: Side, n: usize) -> Vec<&Order> {
+        match side {
+            Side::Bid => self.bids.iter().map(|o| &o.order).rev().take(n).collect(),
+            Side::Ask => self.asks.iter().map(|o| &o.order).rev().take(n).collect()
+        } 
     }
 }
 
@@ -434,7 +472,7 @@ impl Agent {
             account_info: init,
         }
     }
-    pub fn run(&self, mut order_sequence: Vec<(SubmitOrder, u64)>) {
+    pub fn test_run(&self, mut order_sequence: Vec<(SubmitOrder, u64)>) {
         let mut i = 0;
         loop {
             let market_info = self.market_info_receiver.try_recv();
@@ -453,6 +491,85 @@ impl Agent {
             }
         }
     }
+}
+
+pub struct Broker { 
+    // represents sum total of external order flow modelled as a Poisson process
+    account_receiver: mpsc::Receiver<AccountInfo>,
+    order_sender: mpsc::Sender<MakeOrder>,
+    pub account_info: AccountInfo,
+
+    
+    lambda_s: f64, 
+    lambda_c: f64,
+    sigma_q: f64,
+    sigma_p: f64,
+    p_f: f64, // fundamental price
+    
+    
+}
+
+impl Broker {
+    pub fn build(lambda_s: f64, lambda_c: f64, sigma_p: f64, sigma_q: f64, p_f: f64, market: &mut Market) -> Result<Broker, &'static str> {
+        if lambda_c <= 0. || lambda_s <= 0. || sigma_p <= 0. || p_f <= 0. || sigma_q <= 0. {
+            return Err("Please provide positive parameters")
+        };
+        let init = AccountInfo {
+            cash: 0.,
+            stocks: 0,
+            id: Uuid::new_v4()
+        };
+        let (order_sender, _, account_receiver) = market.create_account(init);
+        Ok(Broker {
+            account_receiver,
+            order_sender,
+            account_info: init,
+            lambda_s,
+            lambda_c,
+            sigma_p,
+            sigma_q,
+            p_f
+        })
+    }
+    pub fn run(&mut self) {
+        let exp_dist_s = Exp::new(self.lambda_s).unwrap();
+        let exp_dist_c = Exp::new(self.lambda_c).unwrap();
+        let logn_dist = LogNormal::new(0., self.sigma_p).unwrap();
+        let norm_dist = Normal::new(0., self.sigma_q).unwrap();
+        let bern_dist = Bernoulli::new(0.5).unwrap();
+       
+        let share = Arc::new(Mutex::new(self));
+        let submit_self = share.clone();
+        let cancel_self = share.clone();
+        let submit_thread = crossbeam::thread::scope(move |_| { 
+            let mut rng = rand::thread_rng();
+            let self_ = submit_self; 
+            loop { 
+                let mut self_ = self_.lock().unwrap();
+                if let Ok(account_info) = self_.account_receiver.try_recv() {
+                    self_.account_info = account_info; 
+                }
+                let _ = self_.order_sender.send(MakeOrder::External(
+                    SubmitOrder {
+                        account_id: self_.account_info.id,
+                        side: if bern_dist.sample(&mut rng) {Side::Bid} else {Side::Ask},
+                        limit: Some(logn_dist.sample(&mut rng) * self_.p_f),
+                        quantity: norm_dist.sample(&mut rng).abs().trunc() as usize
+                    }
+                ));
+                drop(self_);
+                thread::sleep(Duration::from_secs_f64(exp_dist_s.sample(&mut rng)));
+            } 
+        });
+        let cancel_thread = crossbeam::thread::scope(move |_| {
+            let mut rng = rand::thread_rng();
+            let self_ = cancel_self;
+            loop {
+                
+                thread::sleep(Duration::from_secs_f64(exp_dist_c.sample(&mut rng)));
+            }
+        });
+    } 
 }
 
 #[cfg(test)]
@@ -482,7 +599,7 @@ mod tests {
                 }, 500),
                 ];
             order_sequence.reverse();
-            agent1.run(order_sequence);
+            agent1.test_run(order_sequence);
         });
         let agent2_handler = thread::spawn(move || { 
             println!("hello");
@@ -491,7 +608,7 @@ mod tests {
                     limit: Some(21.), quantity: 23, side: Side::Bid, account_id: agent2.account_info.id
                 }, 3000)
             ];
-            agent2.run(order_sequence);
+            agent2.test_run(order_sequence);
         });
 
         let market_handler = thread::spawn(move || {
@@ -539,7 +656,7 @@ mod tests {
                 }, 2000)
                 ];
             order_sequence.reverse();
-            alice.run(order_sequence);
+            alice.test_run(order_sequence);
         });
         let bob_handler = thread::spawn(move || { 
             let mut order_sequence = vec![
@@ -553,7 +670,7 @@ mod tests {
             order_sequence.reverse();
             
             thread::sleep(Duration::from_millis(900));
-            bob.run(order_sequence);
+            bob.test_run(order_sequence);
         });
         let charlie_handler = thread::spawn(move || {
             thread::sleep(Duration::from_millis(2133));
@@ -562,7 +679,7 @@ mod tests {
                     limit: Some(60.01), quantity: 120, side: Side::Ask, account_id: charlie.account_info.id
                 }, 500)
             ];
-            charlie.run(order_sequence);
+            charlie.test_run(order_sequence);
         });
         let dan_handler = thread::spawn(move || {
             thread::sleep(Duration::from_millis(2266));
@@ -575,7 +692,7 @@ mod tests {
                 }, 100)
             ];
             order_sequence.reverse();
-            dan.run(order_sequence);
+            dan.test_run(order_sequence);
             
         });
 
