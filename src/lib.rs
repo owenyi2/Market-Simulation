@@ -41,7 +41,7 @@ pub struct Account {
 
 impl Account {
     fn notify(&mut self) {
-        self.account_sender.send(self.account_info);
+        let _ = self.account_sender.send(self.account_info);
     }
 }
 
@@ -122,6 +122,7 @@ impl Market {
             if best_ask.limit.is_none() || best_bid.limit.is_none() {
                  // If only one is a market order, price is the best limit
                  // If both are market, then look for the best limit price on each side. The older one gets the best fill. If both are same age, then they fill at the midpoint. If there are no best limit prices, then no transaction 
+                 todo!();
             } else {
                 if best_ask.limit > best_bid.limit {
                     break
@@ -135,7 +136,7 @@ impl Market {
                     // the older order gets the better fill
                 }; 
                 
-                let Some(buyer) = self.accounts.get(&best_bid.account_id) else {
+                let Some(buyer) = self.accounts.get(&best_bid.account_id) else { 
                     self.order_book.pop(Side::Bid);
                     break
                 };
@@ -171,9 +172,9 @@ impl Market {
 
     fn validate_order(&self, order: SubmitOrder) -> Result<Order, ()> {
         let order = Order::build(order).map_err(|_| ())?;
-        // if self.order_book.is_wash(order) {
-        //     return Err(())
-        // }
+        if self.order_book.is_wash(&order) {
+            return Err(())
+        }
         Ok(order)
     }
     fn cancel_order(&mut self, order: CancelOrder) {
@@ -250,19 +251,46 @@ impl OrderBook {
         }
     }
 
-    // fn is_wash(&self, order: Order) -> bool {
-    //     match order.side {
-    //         Side::Bid => {
-    //             if let Some(best_ask) = self.asks.iter().filter(|o| o.account_id == order.account_id).rev().next() {
-    //                 if best_ask.limit.is_none() {
-    //                     return false // TODO: how to handle validating market orders against wash trades. It's simple actually. J=
-    // // We can only submit market orders if we don't have any opposing limit orders and we can only submit limit orders if we don't have any opposing market orders. On top of the other rule that we can only submit limit orders if we don't have any are no opposing orders 
-    //                 }
-    //                 if order.limit
-    //             }
-    //         }
-    //     } 
-    // }
+    fn is_wash(&self, order: &Order) -> bool {
+        match order.side {
+            Side::Bid => {
+                if let Some(best_ask) = self.asks.iter().filter(|o| o.order.account_id == order.account_id).rev().next() {
+                    if best_ask.order.limit.is_none() {
+                        todo!();
+                        return true // TODO: how to handle validating market orders against wash trades. It's simple actually. J=
+    // We can only submit market orders if we don't have any opposing limit orders and we can only submit limit orders if we don't have any opposing market orders. On top of the other rule that we can only submit limit orders if we don't have any are no opposing orders 
+                    };
+                    if order.limit.is_none() {
+                        todo!();
+                    };
+                    println!("{:?}", best_ask.order);
+                    println!("{:?}", order);
+                    if order.limit.unwrap() >= best_ask.order.limit.unwrap() {
+                        return true
+                    };
+                };
+                return false
+            }
+            Side::Ask => {
+                if let Some(best_bid) = self.bids.iter().filter(|o| o.order.account_id == order.account_id).rev().next() {
+                    if best_bid.order.limit.is_none() {
+                        todo!();
+                        return true
+                    }; 
+                    if order.limit.is_none() {
+                        todo!();
+                    };
+
+                    println!("{:?}", best_bid.order);
+                    println!("{:?}", order);
+                    if order.limit.unwrap() <= best_bid.order.limit.unwrap() {
+                        return true
+                    };
+                };
+                return false
+            }
+        } 
+    }
     fn peek(&self, side: Side) -> Option<&Order> {
         match side {
             Side::Bid => Some(&self.bids.last()?.order),
@@ -418,7 +446,7 @@ impl Agent {
                 thread::sleep(Duration::from_millis(delay));
 
                 println!("{}, {}", self.account_info.id, i);
-                self.order_sender.send(MakeOrder::Submit(
+                let _ =self.order_sender.send(MakeOrder::Submit(
                     order
                             ));
                 i += 1;
