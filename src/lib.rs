@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{self, SystemTime, UNIX_EPOCH, Duration};
-use std::cmp::{Ordering, min};
+use std::cmp::{Ordering, min, max};
 use std::ops::Neg;
 use std::fmt::{self, Display};
 
@@ -11,6 +11,25 @@ use rand::Rng;
 use rand_distr::{Exp, LogNormal, Bernoulli, Normal, Distribution};
 use uuid::Uuid;
 use ordered_float::NotNan;
+
+// Current Problem
+
+// We want to share memory for agents to read
+// Previously, this was achieved with channels and copying account info
+// Unfortunately the Orderbook does not implement Copy (because it's data lives on the heap)
+// Also I misinterpreted crossbeam channel. I thought it meant that the consumers could get the same data but, actually it means multiple consumers can take successive data from the channel
+
+// Idea
+
+// Create another crossbeam thread inside Market for serving read requests from agents 
+// Each loop in Market::run, we Clone the orderbook and send it via an mpsc to the serving thread
+// - Even though cloning is ehh, I think it will still be faster than waiting on blocking Mutex's
+// - though if we were bothered, we should profile both approaches
+// The serving thread will represent market info by a read write lock protected variable
+// The serving thread has two jobs
+// - Write to output file for us to analyze later
+// - Serve agents who want to read data
+// The serving thread will spin, and in each loop non-blocking check if it has new data. If it does, it will write the data to an output file, then acquire the write lock, and then write data to local var, drop the lock, allowing other agents to read the data
 
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
 pub enum Side {
@@ -87,6 +106,12 @@ impl Market {
             account_receiver,
         )
     }
+    fn delete_old_orders(&mut self, max_age: f64) {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
+        println!("{:}", now - max_age);
+        self.order_book.cancel_old_orders(now - max_age);
+    }
+
     pub fn run(&mut self) { 
         loop {
             let received = self.order_channel.1.recv().unwrap();
@@ -107,6 +132,7 @@ impl Market {
                     println!("===")
                 }
             }
+            self.delete_old_orders(10.);
         }
     }
 
@@ -247,12 +273,14 @@ impl Display for OrderBook {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut display = String::new(); 
         display.push_str("BIDS\n");
-        for order in self.best(Side::Bid, 10).iter().rev() {
-            display.push_str(&format!("{:.8?} \t {} \t {} \n", order.limit.map(|l| f64::from(l)), order.quantity, order.account_id));
+        display.push_str(&format!("len: {:}\n", self.len(Side::Bid)));
+        for order in self.best(Side::Bid, 100).iter().rev() {
+            display.push_str(&format!("{:.8?} \t {} \t {} \t {}\n", order.limit.map(|l| f64::from(l)), order.quantity, order.account_id, order.timestamp));
         }
         display.push_str("ASKS\n");
-        for order in self.best(Side::Ask, 10) {
-            display.push_str(&format!("{:.8?} \t {} \t {} \n", order.limit.map(|l| f64::from(l)), order.quantity, order.account_id));
+        display.push_str(&format!("len: {:}\n", self.len(Side::Ask)));
+        for order in self.best(Side::Ask, 100) {
+            display.push_str(&format!("{:.8?} \t {} \t {} \t {}\n", order.limit.map(|l| f64::from(l)), order.quantity, order.account_id, order.timestamp));
         }
         write!(f, "{}", display)
     }
@@ -357,11 +385,24 @@ impl OrderBook {
         }
         order 
     }
+    fn cancel_old_orders(&mut self, before: f64) {
+        let bid_len = self.bids.len();
+        let ask_len = self.asks.len();
+        self.bids.retain(|o| f64::from(o.order.timestamp) > before);
+        self.asks.retain(|o| f64::from(o.order.timestamp) > before);
+    }
 
     fn best(&self, side: Side, n: usize) -> Vec<&Order> {
         match side {
             Side::Bid => self.bids.iter().map(|o| &o.order).rev().take(n).collect(),
             Side::Ask => self.asks.iter().map(|o| &o.order).rev().take(n).collect()
+        } 
+    }
+    
+    fn len(&self, side: Side) -> usize {
+        match side {
+            Side::Bid => self.bids.len(),
+            Side::Ask => self.asks.len()
         } 
     }
 }
@@ -552,23 +593,23 @@ impl Broker {
                 let _ = self_.order_sender.send(MakeOrder::External(
                     SubmitOrder {
                         account_id: self_.account_info.id,
-                        side: if bern_dist.sample(&mut rng) {Side::Bid} else {Side::Ask},
+                        side: if bern_dist.sample(&mut rng) {Side::Ask} else {Side::Bid},
                         limit: Some(logn_dist.sample(&mut rng) * self_.p_f),
-                        quantity: norm_dist.sample(&mut rng).abs().trunc() as usize
+                        quantity: max(1, norm_dist.sample(&mut rng).abs().trunc() as usize)
                     }
                 ));
                 drop(self_);
                 thread::sleep(Duration::from_secs_f64(exp_dist_s.sample(&mut rng)));
             } 
         });
-        let cancel_thread = crossbeam::thread::scope(move |_| {
-            let mut rng = rand::thread_rng();
-            let self_ = cancel_self;
-            loop {
-                
-                thread::sleep(Duration::from_secs_f64(exp_dist_c.sample(&mut rng)));
-            }
-        });
+        // let cancel_thread = crossbeam::thread::scope(move |_| {
+        //     let mut rng = rand::thread_rng();
+        //     let self_ = cancel_self;
+        //     loop {
+        //         
+        //         thread::sleep(Duration::from_secs_f64(exp_dist_c.sample(&mut rng)));
+        //     }
+        // });
     } 
 }
 

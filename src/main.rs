@@ -7,7 +7,7 @@ fn main() {
 //     let agent1 = Agent::new(10000., 0, &mut market);
 //     let agent2 = Agent::new(2000., 4, &mut market);
     let mut market = Market::new();
-    let mut broker = Broker::build(20., 20., 0.01, 100., 100., &mut market).unwrap();
+    let mut broker = Broker::build(20., 20., 0.05, 100., 100., &mut market).unwrap();
 
     let broker_handler = thread::spawn(move || {
         broker.run();
