@@ -7,6 +7,7 @@ use std::ops::Neg;
 use std::fmt::{self, Display};
 
 use crossbeam;
+use bus;
 use rand::Rng;
 use rand_distr::{Exp, LogNormal, Bernoulli, Normal, Distribution};
 use uuid::Uuid;
@@ -53,9 +54,21 @@ impl Neg for Side {
 // The Agent listens on channels
 
 #[derive(Debug)]
+struct MarketInfo {
+    last_price: f64,
+    best_bids: Vec<OrderView>,
+    best_asks: Vec<OrderView>
+}
+
+impl MarketInfo {
+    fn new(last_price: f64, best_bids: Vec<OrderView>, best_asks: Vec<OrderView>) -> MarketInfo{
+        MarketInfo {last_price, best_bids, best_asks}
+    }
+}
+
+#[derive(Debug)]
 pub struct Account {
     account_sender: mpsc::Sender<AccountInfo>,
-    market_info_sender: crossbeam::channel::Sender<String>,
     solvent: bool, 
     account_info: AccountInfo,
 }
@@ -69,19 +82,18 @@ impl Account {
 pub struct Market {
     order_book: OrderBook,
     order_channel: (mpsc::Sender<MakeOrder>, mpsc::Receiver<MakeOrder>),
-    market_info_channel: (
-        crossbeam::channel::Sender<String>,
-        crossbeam::channel::Receiver<String>,
-    ),
+    market_info_channel: bus::Bus<Arc<MarketInfo>>,
     accounts: HashMap<Uuid, Account>,
+    last_price: f64
 }
 impl Market {
     pub fn new() -> Market {
         Market {
             order_book: OrderBook::default(),
             order_channel: mpsc::channel(),
-            market_info_channel: crossbeam::channel::unbounded(),
+            market_info_channel: bus::Bus::new(1),
             accounts: HashMap::new(),
+            last_price: 100.
         }
     }
     pub fn create_account(
@@ -89,26 +101,24 @@ impl Market {
         init: AccountInfo,
     ) -> (
         mpsc::Sender<MakeOrder>,
-        crossbeam::channel::Receiver<String>,
+        bus::BusReader<Arc<MarketInfo>>,
         mpsc::Receiver<AccountInfo>,
     ) {
         let (account_sender, account_receiver) = mpsc::channel();
         let account = Account {
             account_sender,
-            market_info_sender: self.market_info_channel.0.clone(),
             solvent: true,
             account_info: init 
         };
         self.accounts.insert(init.id, account);
         (
             self.order_channel.0.clone(),
-            self.market_info_channel.1.clone(),
+            self.market_info_channel.add_rx(),
             account_receiver,
         )
     }
     fn delete_old_orders(&mut self, max_age: f64) {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64();
-        println!("{:}", now - max_age);
         self.order_book.cancel_old_orders(now - max_age);
     }
 
@@ -120,19 +130,14 @@ impl Market {
                 MakeOrder::Cancel(order) => self.cancel_order(order),
                 MakeOrder::External(order) => { 
                     if let Ok(order) = Order::build(order) {
-                        println!("INCOMING");
-                        println!("limit: {:.8?} \t quantity: {} \t id: {}", &order.limit.map(|l| f64::from(l)), &order.quantity, &order.account_id);
 
                         self.record_order(order) 
                     }
                     self.do_clearing();
-                    println!("AFTER CLEARING");
-                    println!("{}", &self.order_book);
-                    println!("{:#?}", &self.accounts);
-                    println!("===")
                 }
             }
             self.delete_old_orders(10.);
+            self.market_info_channel.try_broadcast(MarketInfo::new(self.last_price, self.order_book.best(Side::Bid, 10).iter().map(|&o| OrderView::from(o)).collect(), self.order_book.best(Side::Ask, 10).iter().map(|&o| OrderView::from(o)).collect()).into());
         }
     }
 
@@ -142,14 +147,7 @@ impl Market {
             Err(_) => return ()
         };
 
-        // println!("BEFORE CLEARING");
-        // println!("{:#?}", &self.order_book);
-        // println!("===");
         self.do_clearing();
-        // println!("AFTER CLEARING");
-        // println!("{:#?}", &self.order_book);
-        // println!("{:#?}", &self.accounts);
-        // println!("===")
     }
     fn do_clearing(&mut self) {
         loop {
@@ -199,16 +197,13 @@ impl Market {
                 }
 
                 self.order_book.consume(&qty);
+                self.last_price = f64::from(price);
             }
         } 
-        self.market_info_channel.0.send(
-            format!("{:?} | {:?}", self.order_book.peek(Side::Ask), self.order_book.peek(Side::Bid))
-        ).unwrap(); 
     }
 
     fn record_order(&mut self, order: Order) { 
         self.order_book.insert(order);
-        // println!("{:#?}", self.order_book);
     }
 
     fn validate_order(&self, order: SubmitOrder) -> Result<Order, ()> {
@@ -249,6 +244,21 @@ struct Order {
     id: Uuid
 }
 
+#[derive(Debug)]
+struct OrderView {
+    limit: f64,
+    quantity: usize,
+    side: Side
+}
+
+impl From<&Order> for OrderView {
+    fn from(order: &Order) -> OrderView {
+    
+        OrderView {limit: f64::from(order.limit.unwrap()), quantity: order.quantity, side: order.side} 
+    }
+    // damn we really should just get rid of market orders because we have just been side stepping it
+}
+
 impl Order {
     fn build(order: SubmitOrder) -> Result<Order, &'static str>{
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| "Error in generating timestamp")?.as_secs_f64();
@@ -271,15 +281,16 @@ struct OrderBook {
 
 impl Display for OrderBook {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let n = 5;
         let mut display = String::new(); 
         display.push_str("BIDS\n");
         display.push_str(&format!("len: {:}\n", self.len(Side::Bid)));
-        for order in self.best(Side::Bid, 100).iter().rev() {
+        for order in self.best(Side::Bid, n).iter().rev() {
             display.push_str(&format!("{:.8?} \t {} \t {} \t {}\n", order.limit.map(|l| f64::from(l)), order.quantity, order.account_id, order.timestamp));
         }
         display.push_str("ASKS\n");
         display.push_str(&format!("len: {:}\n", self.len(Side::Ask)));
-        for order in self.best(Side::Ask, 100) {
+        for order in self.best(Side::Ask, n) {
             display.push_str(&format!("{:.8?} \t {} \t {} \t {}\n", order.limit.map(|l| f64::from(l)), order.quantity, order.account_id, order.timestamp));
         }
         write!(f, "{}", display)
@@ -322,8 +333,6 @@ impl OrderBook {
                     if order.limit.is_none() {
                         todo!();
                     };
-                    println!("{:?}", best_ask.order);
-                    println!("{:?}", order);
                     if order.limit.unwrap() >= best_ask.order.limit.unwrap() {
                         return true
                     };
@@ -339,9 +348,6 @@ impl OrderBook {
                     if order.limit.is_none() {
                         todo!();
                     };
-
-                    println!("{:?}", best_bid.order);
-                    println!("{:?}", order);
                     if order.limit.unwrap() <= best_bid.order.limit.unwrap() {
                         return true
                     };
@@ -492,9 +498,13 @@ pub struct AccountInfo {
     pub id: Uuid,
 }
 
+// we have a bit of an issue with using bus crate though 
+// the bus will only drop an item when every receiver has seen it
+// what we want is the bus will drop the oldes item if it is full 
+
 pub struct Agent {
     account_receiver: mpsc::Receiver<AccountInfo>,
-    market_info_receiver: crossbeam::channel::Receiver<String>,
+    market_info_receiver: bus::BusReader<Arc<MarketInfo>>,
     order_sender: mpsc::Sender<MakeOrder>,
     pub account_info: AccountInfo,
 }
@@ -513,18 +523,53 @@ impl Agent {
             account_info: init,
         }
     }
-    pub fn test_run(&self, mut order_sequence: Vec<(SubmitOrder, u64)>) {
+    fn compute_dispersion(market_info: &MarketInfo) -> f64 {
+        let total_qty: f64 = market_info.best_bids.iter().chain(market_info.best_asks.iter()).map(|o| o.quantity as f64).sum::<f64>();  
+        let EX_sq: f64 = market_info.best_bids.iter().chain(market_info.best_asks.iter()).map(|o| o.quantity as f64 * o.limit * o.limit).sum::<f64>() / total_qty;
+        let EX: f64 = market_info.best_bids.iter().chain(market_info.best_asks.iter()).map(|o| o.quantity as f64 * o.limit).sum::<f64>() / total_qty;
+        EX_sq - EX*EX
+    } 
+    fn send_order(&self, limit: f64, quantity: usize, side: Side) { 
+        self.order_sender.send(MakeOrder::Submit(SubmitOrder{
+    
+                limit: Some(limit), quantity, side, account_id: self.account_info.id
+        }
+                        ));
+    } 
+    pub fn run(&mut self) {
+        let w_0 = 0.5;
+        let w_1 = 0.01;
+        loop {
+            let market_info = self.market_info_receiver.recv().unwrap();
+            if let Ok(account_info) = self.account_receiver.try_recv() {
+                self.account_info = account_info
+            }
+
+            let last_price = market_info.last_price;
+            let dispersion = Self::compute_dispersion(&market_info);
+            if dispersion == 0.0 {
+                continue;
+            }
+            let reservation_price = last_price - self.account_info.stocks as f64 * w_0;
+            let spread = dispersion * w_1;
+            
+
+            thread::sleep(Duration::from_millis(100));
+            self.send_order(reservation_price + spread / 2.0, 10, Side::Ask);
+            self.send_order(reservation_price - spread / 2.0, 10, Side::Bid);
+
+        }
+    }
+    pub fn test_run(&mut self, mut order_sequence: Vec<(SubmitOrder, u64)>) {
         let mut i = 0;
         loop {
-            let market_info = self.market_info_receiver.try_recv();
+            let market_info = self.market_info_receiver.recv();
 
-            // println!("{:#?}", market_info);
             if order_sequence.len() > 0 { 
                 let (order, delay) = order_sequence.pop().unwrap();
 
                 thread::sleep(Duration::from_millis(delay));
 
-                println!("{}, {}", self.account_info.id, i);
                 let _ =self.order_sender.send(MakeOrder::Submit(
                     order
                             ));
@@ -643,7 +688,6 @@ mod tests {
             agent1.test_run(order_sequence);
         });
         let agent2_handler = thread::spawn(move || { 
-            println!("hello");
             let order_sequence = vec![
                 (SubmitOrder {
                     limit: Some(21.), quantity: 23, side: Side::Bid, account_id: agent2.account_info.id
@@ -658,7 +702,6 @@ mod tests {
 
         thread::spawn(|| {thread::sleep(Duration::from_millis(10000));}).join();
          
-        println!("helloworld");
 
         // Kinda janky run with `cargo test -- --nocapture`
         // But I expect we will end up rewriting agents so much that this test shouldn't last for too long
@@ -673,10 +716,6 @@ mod tests {
         let charlie = Agent::new(1e5, 1000, &mut market);
         let dan = Agent::new(1e5, 1000, &mut market);
 
-        println!("alice: {}", alice.account_info.id);
-        println!("bob: {}", bob.account_info.id);
-        println!("charlie: {}", charlie.account_info.id);
-        println!("dan: {}", dan.account_info.id);
 
         let alice_handler = thread::spawn(move || {
             let mut order_sequence = vec![
@@ -744,7 +783,6 @@ mod tests {
 
         thread::spawn(|| {thread::sleep(Duration::from_millis(10000));}).join();
          
-        println!("helloworld");
 
     }
 }
